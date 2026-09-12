@@ -1,0 +1,7 @@
+__pycache__
+*.pyc
+.git
+.venv
+ultimate_run
+cache
+output

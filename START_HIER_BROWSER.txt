@@ -1,0 +1,41 @@
+CRYPTO FORECASTER - DEPLOYEN VIA BROWSER (GEEN RAILWAY CLI)
+
+Deze map is direct geschikt om naar een GitHub repository te uploaden.
+Railway leest Dockerfile en railway.json automatisch.
+
+STAPPEN IN HET KORT
+
+1. Maak gratis GitHub-account: https://github.com
+2. Maak nieuwe PRIVATE repository, bijvoorbeeld:
+   crypto-forecaster-cloud
+3. Upload ALLE BESTANDEN UIT DEZE MAP naar de root van die repository.
+   Upload niet de ZIP zelf.
+4. Ga naar https://railway.com
+5. New Project > Deploy from GitHub repo.
+6. Koppel GitHub en selecteer crypto-forecaster-cloud.
+7. Voeg bij Variables toe:
+   DATA_DIR=/data
+   MODEL_NEWS=true
+   MODEL_DEEP=false
+   AUTO_RUN_MODEL=true
+   MODEL_HOUR_UTC=4
+   MODEL_MINUTE_UTC=15
+8. Voeg een willekeurige lange ADMIN_KEY toe, bijvoorbeeld via een wachtwoordgenerator.
+9. Voeg in Railway een Volume toe met mount path:
+   /data
+10. Laat deployen.
+11. Settings > Networking > Public Networking > Generate Domain.
+12. Test:
+    https://JOUW-DOMEIN.up.railway.app/api/v1/health
+13. Vul in de iPhone-app bij API-adres alleen in:
+    https://JOUW-DOMEIN.up.railway.app
+
+EERSTE RUN
+De API kan al werken terwijl het model nog rekent.
+Controleer:
+  /api/v1/run-status
+  /api/v1/log-tail
+
+Zodra /api/v1/health meldt:
+  modelOutputExists: true
+en lastSuccess een datum heeft, is het echte model klaar.

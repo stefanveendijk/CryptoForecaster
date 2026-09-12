@@ -1,0 +1,16 @@
+numpy>=1.26
+pandas>=2.1
+scipy>=1.11
+scikit-learn>=1.4
+statsmodels>=0.14
+requests>=2.31
+yfinance>=0.2.40
+lxml>=5.0
+html5lib>=1.1
+beautifulsoup4>=4.12
+
+# Optional:
+# xgboost>=2.0      # used automatically with --deep when installed
+# pytrends>=4.9     # only when --google-trends is enabled
+fastapi>=0.115
+uvicorn[standard]>=0.32
