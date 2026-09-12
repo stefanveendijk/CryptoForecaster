@@ -94,7 +94,7 @@ def fetch_fred_series(series: str, start: pd.Timestamp, end: pd.Timestamp) -> pd
         "https://fred.stlouisfed.org/graph/fredgraph.csv"
         f"?id={series}&cosd={start:%Y-%m-%d}&coed={end:%Y-%m-%d}"
     )
-    r = requests.get(url, headers=UA, timeout=60)
+    r = requests.get(url, headers=UA, timeout=20)
     r.raise_for_status()
     d = pd.read_csv(io.StringIO(r.text))
     date_col = d.columns[0]
@@ -142,7 +142,7 @@ def _cm_catalog(asset: str) -> set:
     for url in urls:
         try:
             r = requests.get(url, params={"assets": asset, "page_size": 10000},
-                             headers=UA, timeout=60)
+                             headers=UA, timeout=20)
             if not r.ok:
                 continue
             payload = r.json()
@@ -183,7 +183,7 @@ def fetch_coinmetrics_asset(asset: str, start: pd.Timestamp, end: pd.Timestamp) 
     while True:
         if token:
             params["next_page_token"] = token
-        r = requests.get(url, params=params, headers=UA, timeout=90)
+        r = requests.get(url, params=params, headers=UA, timeout=25)
         if not r.ok:
             # Retry metric-by-metric if community permissions differ.
             parts = []
@@ -191,7 +191,7 @@ def fetch_coinmetrics_asset(asset: str, start: pd.Timestamp, end: pd.Timestamp) 
                 p = params.copy()
                 p["metrics"] = metric
                 p.pop("next_page_token", None)
-                rr = requests.get(url, params=p, headers=UA, timeout=60)
+                rr = requests.get(url, params=p, headers=UA, timeout=20)
                 if rr.ok:
                     dat = rr.json().get("data", [])
                     if dat:
@@ -226,6 +226,7 @@ def fetch_coinmetrics(cfg: Config) -> pd.DataFrame:
     frames = []
     for coin, asset in [("BTC","btc"), ("ETH","eth")]:
         try:
+            print(f"    [ONCHAIN] Coin Metrics {coin}...", flush=True)
             d = fetch_coinmetrics_asset(asset, start, end)
             if not d.empty:
                 frames.append(d.add_prefix(f"OC_{coin}_"))
@@ -248,7 +249,7 @@ def fetch_coinmetrics(cfg: Config) -> pd.DataFrame:
 
 def fetch_fear_greed(cfg: Config) -> pd.DataFrame:
     url = "https://api.alternative.me/fng/"
-    r = requests.get(url, params={"limit": 0, "format": "json"}, headers=UA, timeout=60)
+    r = requests.get(url, params={"limit": 0, "format": "json"}, headers=UA, timeout=20)
     r.raise_for_status()
     rows = r.json().get("data", [])
     d = pd.DataFrame(rows)
@@ -267,7 +268,7 @@ def _binance_funding(symbol: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.
     while cursor < end_ms:
         r = requests.get(url, params={
             "symbol": symbol, "startTime": cursor, "endTime": end_ms, "limit": 1000
-        }, headers=UA, timeout=60)
+        }, headers=UA, timeout=20)
         if not r.ok:
             break
         batch = r.json()
@@ -317,7 +318,11 @@ def _parse_parentheses_number(x):
         return np.nan
 
 def _farside_table(url: str, prefix: str) -> pd.DataFrame:
-    tables = pd.read_html(url)
+    # Fetch explicitly with a hard timeout. Direct pd.read_html(URL) can wait
+    # indefinitely behind CDN/anti-bot behaviour.
+    r = requests.get(url, headers=UA, timeout=20)
+    r.raise_for_status()
+    tables = pd.read_html(io.StringIO(r.text))
     candidates = []
     for t in tables:
         if t.shape[1] >= 3:
@@ -342,6 +347,7 @@ def fetch_etf_flows(cfg: Config) -> pd.DataFrame:
         ("ETF_ETH", "https://farside.co.uk/ethereum-etf-flow-all-data/"),
     ]:
         try:
+            print(f"    [ETF] {prefix} ophalen...", flush=True)
             d = _farside_table(url, prefix)
             if not d.empty:
                 frames.append(d)
@@ -362,14 +368,14 @@ def _deribit_dvol(currency: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.D
     cursor_end = end_ms
     seen = set()
 
-    for _ in range(200):
+    for _ in range(20):
         params = {
             "currency": currency,
             "start_timestamp": start_ms,
             "end_timestamp": cursor_end,
             "resolution": "1D",
         }
-        r = requests.get(url, params=params, headers=UA, timeout=60)
+        r = requests.get(url, params=params, headers=UA, timeout=20)
         if not r.ok:
             break
         result = r.json().get("result", {})
@@ -448,7 +454,11 @@ def load_custom_features(paths: List[str]) -> pd.DataFrame:
 def gather_all_nonnews(cfg: Config, cache_dir: Path, force=False) -> Dict[str, pd.DataFrame]:
     cache_dir.mkdir(parents=True, exist_ok=True)
     out = {}
+
+    print("  [DATA] crypto/BTC+ETH starten...", flush=True)
+    t0 = time.time()
     out["crypto"] = fetch_yfinance_crypto(cfg)
+    print(f"  [DATA] crypto klaar in {time.time()-t0:.1f}s, {len(out['crypto'])} rijen", flush=True)
 
     loaders = []
     if cfg.enable_cross_assets:
@@ -469,11 +479,18 @@ def gather_all_nonnews(cfg: Config, cache_dir: Path, force=False) -> Dict[str, p
 
     for name, loader in loaders:
         path = cache_dir / f"{name}.csv"
+        print(f"  [DATA] {name} starten...", flush=True)
+        t0 = time.time()
         try:
             out[name] = _cache_csv(path, lambda l=loader: l(cfg), force=force)
+            rows = len(out[name]) if out[name] is not None else 0
+            cols = len(out[name].columns) if out[name] is not None and not out[name].empty else 0
+            print(f"  [DATA] {name} klaar in {time.time()-t0:.1f}s, {rows} rijen / {cols} kolommen", flush=True)
         except Exception as e:
-            print(f"WAARSCHUWING bron {name}: {e}")
+            print(f"  [DATA] WAARSCHUWING {name} na {time.time()-t0:.1f}s: {type(e).__name__}: {e}", flush=True)
             out[name] = pd.DataFrame()
 
+    print("  [DATA] custom features laden...", flush=True)
     out["custom"] = load_custom_features(cfg.custom_feature_files)
+    print("  [DATA] alle niet-nieuwsbronnen afgerond.", flush=True)
     return out

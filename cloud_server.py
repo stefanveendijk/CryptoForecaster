@@ -111,6 +111,7 @@ def run_model(reason: str = "scheduled"):
         WORKDIR.mkdir(parents=True, exist_ok=True)
         cmd=[
             sys.executable,
+            "-u",
             str(APP_DIR/"crypto_forecaster_ultimate.py"),
             "--workdir", str(WORKDIR),
         ]
@@ -197,6 +198,16 @@ def scheduler_loop():
 @app.on_event("startup")
 def startup():
     DATA_DIR.mkdir(parents=True,exist_ok=True)
+
+    # A process restart/redeploy kills any previous model subprocess.
+    # If the persistent state still says "running", it is stale and would
+    # otherwise prevent the new deployment from ever starting a fresh run.
+    state = load_state()
+    if state.get("running"):
+        state["running"] = False
+        state["last_error"] = "Vorige modelrun is onderbroken door restart/redeploy; automatische herstart volgt."
+        save_state(state)
+
     threading.Thread(target=scheduler_loop,daemon=True).start()
 
 @app.get("/")
