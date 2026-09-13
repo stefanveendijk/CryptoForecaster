@@ -8,6 +8,7 @@ from config import DEFAULT_CONFIG, Config
 import providers
 import features as feat
 import modeling
+import advanced_features
 
 # Reused news/event engine
 import news_core
@@ -34,7 +35,6 @@ def add_news(df, cfg, cache_dir, output_dir, force=False):
     if not cfg.enable_news:
         return df, pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     try:
-        # Align the v3 module's topic taxonomy.
         news_core.TOPIC_QUERIES = event_engine.EVENT_TOPICS
         event_engine.core = news_core
 
@@ -44,10 +44,7 @@ def add_news(df, cfg, cache_dir, output_dir, force=False):
         raw_news=news_core.load_or_update_news(cache_dir/"gdelt",start,end,force)
         raw_tone=event_engine.load_event_tone_cache(cache_dir/"gdelt",start,end,force)
 
-        # news_core.add_news_features expects price-target columns from its own naming scheme.
-        # We only need the generated news columns; feed a minimal carrier frame and strip it back.
         carrier=pd.DataFrame(index=df.index)
-        # Create placeholder BTC/ETH columns used by news feature constructor only for joins.
         for coin in ["BTC","ETH"]:
             carrier[f"{coin}_close"]=df[f"{coin}_close"]
             carrier[f"{coin}_ret1"]=np.log(df[f"{coin}_close"]).diff()
@@ -55,12 +52,10 @@ def add_news(df, cfg, cache_dir, output_dir, force=False):
         newscols=[c for c in newsframe if "_news_" in c]
         df=df.join(newsframe[newscols],how="left")
 
-        # Add richer event tone/z/intensity via event engine.
         enriched=event_engine.add_event_features(df,raw_news,raw_tone)
         df=enriched
 
         events=event_engine.detect_events(
-            # event_engine expects v2-style price feature names. Make adapter.
             pd.DataFrame({
                 "BTC_close":df["BTC_close"],"ETH_close":df["ETH_close"],
                 "BTC_mom_30":df["TECH_BTC_mom30"],"ETH_mom_30":df["TECH_ETH_mom30"],
@@ -69,8 +64,6 @@ def add_news(df, cfg, cache_dir, output_dir, force=False):
             },index=df.index),
             raw_news,raw_tone
         )
-        # v3 event study has strict column naming adapter needs; skip here because v4 model
-        # uses event features directly. Persist raw detected events.
         events.to_csv(output_dir/"detected_events.csv",index=False)
         return df,raw_news,raw_tone,events
     except Exception as e:
@@ -89,7 +82,10 @@ def run(cfg:Config, workdir:Path, force=False):
     print("="*90)
 
     print("\n1/6 Data verzamelen...")
-    sources=providers.gather_all_nonnews(cfg,cache,force=force)
+    # Accuracy fix: the old cache path could leave non-news sources stale for days.
+    # Refresh the public sources on every scheduled model run; individual providers
+    # still fail soft so a temporary API outage cannot destroy an otherwise valid run.
+    sources=providers.gather_all_nonnews(cfg,cache,force=True)
     q=source_quality(sources)
     q.to_csv(outdir/"data_quality.csv",index=False)
     print(q.to_string(index=False))
@@ -97,10 +93,15 @@ def run(cfg:Config, workdir:Path, force=False):
     print("\n2/6 Features bouwen...")
     df=feat.build_features(sources,cfg)
 
+    # Add independent public derivatives-market structure. These columns use the
+    # CUSTOM_ prefix so they participate in recent-history experts without shortening
+    # the long-history core experts.
+    df,adv_info=advanced_features.enrich_market_structure(df,cache,force=force)
+    print("  [ADV] market structure:",adv_info)
+
     print("\n3/6 Nieuws + gebeurtenissen...")
     df,raw_news,raw_tone,events=add_news(df,cfg,cache,outdir,force=force)
 
-    # Persist dataset metadata, not full raw data by default.
     groups=feat.feature_groups(df)
     manifest=[]
     for g,cols in groups.items():
@@ -109,6 +110,11 @@ def run(cfg:Config, workdir:Path, force=False):
     pd.DataFrame(manifest).to_csv(outdir/"feature_manifest.csv",index=False)
 
     experts=feat.build_experts(df)
+    adv_cols=[c for c in df.columns if c.startswith("CUSTOM_BYBIT_")]
+    if adv_cols:
+        core=groups.get("technical",[])+groups.get("cross_macro",[])
+        experts["market_structure_recent"]=list(dict.fromkeys(core+adv_cols))
+
     with open(outdir/"experts.json","w",encoding="utf-8") as f:
         json.dump(experts,f,ensure_ascii=False,indent=2)
 
@@ -140,7 +146,6 @@ def run(cfg:Config, workdir:Path, force=False):
                     print(f"  {name:20s}: n={m['n']:4d} AUC={m['auc']:.3f} "
                           f"Brier={m['brier']:.4f} MAE={m['mae_return']:.4f}")
                     row={"coin":coin,"horizon":h,"expert":name,**m}
-                    # Lockbox = latest OOS period, never a training shortcut.
                     lock=bt.tail(cfg.lockbox_days)
                     lm=modeling.metrics(lock)
                     row.update({f"lockbox_{k}":v for k,v in lm.items()})
@@ -167,7 +172,6 @@ def run(cfg:Config, workdir:Path, force=False):
                     f"strategy_{k}":v for k,v in sm.items()
                 }})
 
-            # Latest predictions from every viable expert.
             current=[]
             for name,cols in experts.items():
                 try:
@@ -201,7 +205,6 @@ def run(cfg:Config, workdir:Path, force=False):
         )
     latest.to_csv(outdir/"latest_forecasts.csv",index=False)
 
-    # Current snapshot of key raw features.
     last=df.index.max()
     snapshot=df.loc[last].dropna()
     snapshot=snapshot[~snapshot.index.str.startswith("TARGET_")]
