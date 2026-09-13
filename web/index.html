@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Crypto Forecaster" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/static/icon.svg" />
+  <title>Crypto Forecaster</title>
+  <style>
+    :root{--bg:#0b1020;--panel:#131a2e;--panel2:#1a2340;--text:#f7f9ff;--muted:#93a1bd;--border:#273251;--blue:#4da3ff;--green:#65d99a;--red:#ff7d8b;--amber:#f0c36a}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    .app{max-width:820px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 14px) 16px calc(env(safe-area-inset-bottom) + 28px)}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.title{font-size:24px;font-weight:800}.sub{font-size:11px;color:var(--muted);margin-top:4px;letter-spacing:.6px}.dot{width:10px;height:10px;border-radius:50%;background:var(--amber)}
+    h2{font-size:24px;margin:18px 0 4px}.intro{color:var(--muted);font-size:13px;line-height:1.5;margin:0 0 14px}
+    .grid{display:grid;grid-template-columns:1fr;gap:10px}.card{background:var(--panel);border:1px solid var(--border);border-radius:18px;padding:16px}.signal{cursor:pointer;-webkit-tap-highlight-color:transparent}.signal:active{transform:scale(.995)}
+    .row{display:flex;align-items:center;justify-content:space-between;gap:10px}.coin{font-size:18px;font-weight:800}.h{color:var(--muted);font-size:12px}.prob{font-size:30px;font-weight:900}.metric{font-weight:700}.muted{color:var(--muted);font-size:13px}.ret.pos{color:var(--green)}.ret.neg{color:var(--red)}
+    .bar{height:7px;background:var(--panel2);border-radius:999px;overflow:hidden;margin-top:8px}.fill{height:100%;background:var(--blue)}
+    .quality{margin-bottom:10px}.event{margin-bottom:10px}.badge{font-size:11px;font-weight:700;padding:5px 8px;border-radius:999px;background:var(--panel2)}
+    .detail{display:none;position:fixed;inset:0;background:rgba(5,8,18,.94);z-index:20;overflow:auto}.detail-inner{max-width:820px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 14px) 16px calc(env(safe-area-inset-bottom) + 28px)}
+    .back{border:1px solid var(--border);background:var(--panel);color:var(--text);border-radius:12px;padding:10px 14px;font-weight:700}.hero{font-size:42px;font-weight:900}.canvas-wrap{background:var(--panel);border:1px solid var(--border);border-radius:18px;padding:14px;margin:14px 0}canvas{width:100%;height:180px;display:block}
+    .info{display:grid;grid-template-columns:1fr auto;gap:12px;margin-top:12px}.install{margin-top:18px;padding:13px 14px;border-radius:14px;background:var(--panel2);color:var(--muted);font-size:12px;line-height:1.45}.error{color:var(--red);font-size:13px;margin-top:10px}
+    @media(min-width:700px){.grid{grid-template-columns:1fr 1fr}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div><div class="title">Crypto Forecaster</div><div id="sub" class="sub">LADEN…</div></div>
+    <div id="dot" class="dot"></div>
+  </header>
+
+  <h2>Actuele signalen</h2>
+  <p class="intro">Kansmodel voor BTC en ETH. Geen koop- of verkoopgarantie.</p>
+  <div id="signals" class="grid"></div>
+
+  <h2>Modelkwaliteit</h2>
+  <div id="quality"></div>
+
+  <h2>Recente nieuwsevents</h2>
+  <div id="events"></div>
+
+  <div class="install">Op iPhone: open deze pagina in Safari → Deel → <b>Zet op beginscherm</b>. Daarna opent Crypto Forecaster als zelfstandige app, zonder Expo Go en zonder laptop.</div>
+  <div id="error" class="error"></div>
+</div>
+
+<div id="detail" class="detail">
+  <div class="detail-inner">
+    <button class="back" onclick="closeDetail()">← Terug</button>
+    <div style="height:16px"></div>
+    <div class="row"><div><div id="dcoin" class="hero"></div><div id="dh" class="muted"></div></div><div id="dprob" class="prob"></div></div>
+    <div class="canvas-wrap"><div class="coin">Historische modelkans</div><div class="muted">Laatste beschikbare out-of-sample punten</div><canvas id="chart" width="720" height="180"></canvas></div>
+    <div id="dinfo" class="card"></div>
+    <div id="weights" class="card" style="margin-top:12px"></div>
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const pct=(v,d=1)=>Number.isFinite(+v)?`${(+v*100).toFixed(d)}%`:'—';
+const money=v=>Number.isFinite(+v)?new Intl.NumberFormat('nl-NL',{style:'currency',currency:'USD',maximumFractionDigits:+v>100?0:2}).format(+v):'—';
+const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+let payload=null;
+
+async function load(){
+  $('error').textContent='';
+  try{
+    const r=await fetch('/api/v1/dashboard',{cache:'no-store'}); if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    payload=await r.json(); localStorage.setItem('cf-dashboard',JSON.stringify(payload)); render(true);
+  }catch(e){
+    try{payload=JSON.parse(localStorage.getItem('cf-dashboard')); render(false); $('error').textContent='Offline: laatst opgeslagen modelresultaat wordt getoond.';}catch{ $('error').textContent='Modeldata kon niet worden geladen.'; }
+  }
+}
+
+function render(live){
+  if(!payload) return;
+  $('dot').style.background=live?'var(--green)':'var(--amber)';
+  const dt=payload.updatedAt?new Date(payload.updatedAt):null;
+  $('sub').textContent=`${live?'LIVE MODEL':'CACHED'} · ${dt && !isNaN(dt)?dt.toLocaleString('nl-NL'):payload.updatedAt||'—'}`;
+  const forecasts=[...(payload.forecasts||[])].filter(f=>[1,7,30,90].includes(+f.horizon)).sort((a,b)=>a.coin.localeCompare(b.coin)||a.horizon-b.horizon);
+  $('signals').innerHTML=forecasts.map(f=>{
+    const ret=+f.predReturn||0, conf=Math.max(0,Math.min(1,+f.confidenceScore||0));
+    return `<div class="card signal" onclick='openDetail(${JSON.stringify(f).replace(/'/g,"&#39;")})'>
+      <div class="row"><div><div class="coin">${esc(f.coin)} · ${f.horizon}d</div><div class="h">${esc(f.date)}</div></div><div class="prob">${pct(f.probUp,0)}</div></div>
+      <div class="row" style="margin-top:10px"><div class="muted">Verwachte return</div><div class="metric ret ${ret>=0?'pos':'neg'}">${pct(ret,1)}</div></div>
+      <div class="row" style="margin-top:8px"><div class="muted">Model confidence</div><div class="metric">${pct(conf,0)}</div></div><div class="bar"><div class="fill" style="width:${conf*100}%"></div></div>
+    </div>`;
+  }).join('');
+
+  const metrics=[...(payload.metrics||[])].filter(m=>m.expert==='META').sort((a,b)=>a.coin.localeCompare(b.coin)||a.horizon-b.horizon);
+  $('quality').innerHTML=metrics.map(m=>`<div class="card quality"><div class="row"><div class="coin">${esc(m.coin)} · ${m.horizon}d</div><div class="metric">AUC ${m.auc==null?'—':(+m.auc).toFixed(3)}</div></div><div class="muted" style="margin-top:7px">Brier ${m.brier==null?'—':(+m.brier).toFixed(3)} · accuracy ${pct(m.accuracy,0)}</div></div>`).join('')||'<div class="muted">Geen kwaliteitsdata beschikbaar.</div>';
+
+  const events=(payload.events||[]).slice(0,20);
+  $('events').innerHTML=events.map(e=>`<div class="card event"><div class="row"><div class="coin">${esc(e.coin)} · ${esc(String(e.topic||'').replaceAll('_',' '))}</div><div class="badge">${esc(e.sentiment||'unknown')}</div></div><div class="muted" style="margin-top:7px">${esc(e.date)} · ${e.articleCount??0} artikelen · z ${e.eventZ90==null?'—':(+e.eventZ90).toFixed(1)}</div></div>`).join('')||'<div class="muted">Geen nieuwsevents beschikbaar.</div>';
+}
+
+async function openDetail(f){
+  $('detail').style.display='block'; document.body.style.overflow='hidden';
+  $('dcoin').textContent=f.coin; $('dh').textContent=`${f.horizon}-daagse voorspelling`; $('dprob').textContent=pct(f.probUp,0);
+  $('dinfo').innerHTML=`<div class="coin">Verwachting</div><div class="info"><div class="muted">Huidige koers</div><div class="metric">${money(f.currentPrice)}</div><div class="muted">Verwachte koers</div><div class="metric">${money(f.expectedPrice)}</div><div class="muted">Verwachte return</div><div class="metric">${pct(f.predReturn)}</div><div class="muted">80%-band return</div><div class="metric">${pct(f.low80)} – ${pct(f.high80)}</div><div class="muted">80%-band koers</div><div class="metric">${money(f.low80Price)} – ${money(f.high80Price)}</div></div>`;
+  const weights=Object.entries(f.weights||{}).sort((a,b)=>b[1]-a[1]);
+  $('weights').innerHTML=`<div class="coin">Expertgewichten</div>`+weights.map(([n,w])=>`<div style="margin-top:12px"><div class="row"><div class="muted">${esc(n)}</div><div class="metric">${pct(w,0)}</div></div><div class="bar"><div class="fill" style="width:${Math.max(0,Math.min(100,+w*100))}%"></div></div></div>`).join('');
+  try{const r=await fetch(`/api/v1/history?coin=${encodeURIComponent(f.coin)}&horizon=${f.horizon}`); const h=await r.json(); draw(h.points||[]);}catch{draw([])}
+}
+function closeDetail(){ $('detail').style.display='none'; document.body.style.overflow=''; }
+function draw(points){
+  const c=$('chart'),ctx=c.getContext('2d'); const dpr=Math.min(2,window.devicePixelRatio||1),w=c.clientWidth||720,h=180;c.width=w*dpr;c.height=h*dpr;ctx.scale(dpr,dpr);ctx.clearRect(0,0,w,h);
+  ctx.strokeStyle='#273251';ctx.lineWidth=1;for(let i=1;i<4;i++){const y=i*h/4;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}
+  if(points.length<2){ctx.fillStyle='#93a1bd';ctx.font='13px sans-serif';ctx.fillText('Geen historische punten beschikbaar',12,28);return}
+  const vals=points.map(p=>Math.max(0,Math.min(1,+p.probUp||0)));ctx.strokeStyle='#4da3ff';ctx.lineWidth=2.5;ctx.beginPath();vals.forEach((v,i)=>{const x=i/(vals.length-1)*w,y=(1-v)*h;i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();
+}
+if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));
+load(); setInterval(load,60000);
+</script>
+</body>
+</html>
