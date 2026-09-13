@@ -1,5 +1,5 @@
-const CACHE = 'crypto-forecaster-v1';
-const SHELL = ['/', '/manifest.webmanifest', '/static/icon.svg'];
+const CACHE = 'crypto-forecaster-v2';
+const SHELL = ['/app', '/manifest.webmanifest', '/static/icon.svg'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
@@ -34,6 +34,6 @@ self.addEventListener('fetch', event => {
         caches.open(CACHE).then(cache => cache.put(req, copy));
         return res;
       })
-      .catch(() => caches.match(req).then(hit => hit || caches.match('/')))
+      .catch(() => caches.match(req).then(hit => hit || caches.match('/app')))
   );
 });
