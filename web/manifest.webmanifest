@@ -2,7 +2,7 @@
   "name": "Crypto Forecaster",
   "short_name": "CryptoForecast",
   "description": "BTC en ETH modelvoorspellingen voor 1, 7, 30 en 90 dagen.",
-  "start_url": "/",
+  "start_url": "/app",
   "scope": "/",
   "display": "standalone",
   "background_color": "#0b1020",
