@@ -1,0 +1,67 @@
+name: Crypto Forecaster Pages
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '20 4 * * *'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: crypto-pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Restore model work cache
+        uses: actions/cache@v4
+        with:
+          path: .pages_run
+          key: crypto-model-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            crypto-model-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run forecasting model
+        env:
+          OMP_NUM_THREADS: '2'
+          OPENBLAS_NUM_THREADS: '2'
+          MKL_NUM_THREADS: '2'
+        run: python -u crypto_forecaster_ultimate.py --workdir .pages_run --no-news
+
+      - name: Export static dashboard data
+        run: python scripts/export_pages_data.py .pages_run pages_site
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages_site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
