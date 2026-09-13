@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#0b1020"/>
+  <path d="M96 352c56-104 104-120 160-48s104 48 160-80" fill="none" stroke="#58a6ff" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="96" cy="352" r="18" fill="#39d98a"/><circle cx="256" cy="304" r="18" fill="#39d98a"/><circle cx="416" cy="224" r="18" fill="#39d98a"/>
+  <text x="256" y="166" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="92" font-weight="800" fill="#f5f7fb">CF</text>
+</svg>
