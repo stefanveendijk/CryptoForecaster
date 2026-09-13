@@ -16,4 +16,4 @@ RUN python -m pip install --upgrade pip && \
 
 COPY . .
 
-CMD ["sh", "-c", "python version_trigger.py && python -m uvicorn cloud_server:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "python version_trigger.py; (sleep 30; echo MODEL_STATE_AFTER_START; cat /data/cloud_state.json 2>/dev/null || true) & exec python -m uvicorn cloud_server:app --host 0.0.0.0 --port ${PORT:-8000}"]
