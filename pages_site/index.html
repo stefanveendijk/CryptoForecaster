@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Crypto Forecaster" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icon.svg" />
+  <title>Crypto Forecaster</title>
+  <style>
+    :root{--bg:#0b1020;--panel:#11182a;--panel2:#172037;--border:#25304a;--text:#f5f7fb;--muted:#9aa6bd;--blue:#58a6ff;--green:#39d98a;--red:#ff6b6b;--amber:#f2b84b}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    header{position:sticky;top:0;z-index:3;background:rgba(11,16,32,.95);backdrop-filter:blur(10px);padding:calc(env(safe-area-inset-top) + 12px) 18px 12px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+    h1{font-size:22px;margin:0}.sub{font-size:11px;color:var(--muted);margin-top:4px}.dot{width:10px;height:10px;border-radius:50%;background:var(--green)}
+    main{max-width:760px;margin:auto;padding:14px 14px calc(90px + env(safe-area-inset-bottom))} h2{font-size:22px;margin:8px 0 4px}.intro{color:var(--muted);font-size:13px;margin:0 0 14px}
+    .grid{display:grid;grid-template-columns:1fr;gap:12px}.card{background:var(--panel);border:1px solid var(--border);border-radius:18px;padding:16px}.row{display:flex;justify-content:space-between;gap:12px;align-items:center}.coin{font-size:18px;font-weight:800}.h{color:var(--muted);font-size:13px}.prob{font-size:30px;font-weight:900}.ret{font-weight:800}.pos{color:var(--green)}.neg{color:var(--red)}.muted{color:var(--muted);font-size:13px}.metric{font-weight:700}
+    .section{margin-top:22px}.small{padding:13px;margin-bottom:9px}.pill{display:inline-block;padding:3px 8px;border-radius:99px;background:var(--panel2);color:var(--muted);font-size:11px;margin-top:8px}
+    nav{position:fixed;left:0;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--border);padding:8px 8px calc(8px + env(safe-area-inset-bottom));display:flex;justify-content:center}.status{font-size:12px;color:var(--muted)}
+    button{background:var(--blue);color:#07111f;border:0;border-radius:12px;padding:10px 14px;font-weight:800}.error{color:var(--red)}
+  </style>
+</head>
+<body>
+<header><div><h1>Crypto Forecaster</h1><div class="sub" id="updated">Laden…</div></div><div class="dot" id="dot"></div></header>
+<main>
+  <h2>Actuele signalen</h2><p class="intro">Kansmodel voor BTC en ETH. Geen koop- of verkoopgarantie.</p>
+  <div id="forecasts" class="grid"></div>
+  <section class="section"><h2>Modelkwaliteit</h2><div id="metrics"></div></section>
+  <section class="section"><h2>Recente nieuwsevents</h2><div id="events"><div class="muted">Geen events beschikbaar.</div></div></section>
+</main>
+<nav><span class="status" id="status">Live data laden…</span></nav>
+<script>
+const pct=(x,d=1)=>x==null?'—':`${(x*100).toFixed(d)}%`;
+const eur=x=>x==null?'—':new Intl.NumberFormat('nl-NL',{style:'currency',currency:'EUR',maximumFractionDigits:x>100?0:2}).format(x);
+async function load(){
+  try{
+    const r=await fetch('./data/dashboard.json',{cache:'no-store'}); if(!r.ok) throw new Error(`HTTP ${r.status}`); const d=await r.json();
+    document.getElementById('updated').textContent=`LIVE MODEL · ${new Date(d.updatedAt).toLocaleString('nl-NL')}`;
+    document.getElementById('status').textContent='Automatisch bijgewerkt via GitHub';
+    const fs=[...d.forecasts].filter(f=>[1,7,30,90].includes(Number(f.horizon))).sort((a,b)=>a.coin.localeCompare(b.coin)||a.horizon-b.horizon);
+    document.getElementById('forecasts').innerHTML=fs.map(f=>`<div class="card"><div class="row"><div><div class="coin">${f.coin} · ${f.horizon}d</div><div class="h">kans op stijging</div></div><div class="prob">${pct(f.probUp,0)}</div></div><div class="row" style="margin-top:12px"><span class="muted">Verwachte return</span><span class="ret ${f.predReturn>=0?'pos':'neg'}">${pct(f.predReturn)}</span></div><div class="row" style="margin-top:8px"><span class="muted">Verwachte koers</span><span class="metric">${eur(f.expectedPrice)}</span></div><div class="pill">confidence ${pct(f.confidenceScore,0)}</div></div>`).join('');
+    const ms=(d.metrics||[]).filter(m=>String(m.expert).toUpperCase()==='META').sort((a,b)=>a.coin.localeCompare(b.coin)||a.horizon-b.horizon);
+    document.getElementById('metrics').innerHTML=ms.map(m=>`<div class="card small"><div class="row"><span class="coin" style="font-size:15px">${m.coin} · ${m.horizon}d</span><span class="metric">AUC ${m.auc==null?'—':Number(m.auc).toFixed(3)}</span></div><div class="muted" style="margin-top:6px">Brier ${m.brier==null?'—':Number(m.brier).toFixed(3)} · accuracy ${pct(m.accuracy,0)}</div></div>`).join('');
+    const es=(d.events||[]).slice(0,20); if(es.length) document.getElementById('events').innerHTML=es.map(e=>`<div class="card small"><div class="row"><span class="coin" style="font-size:15px">${e.coin} · ${(e.topic||'').replaceAll('_',' ')}</span><span class="metric">${e.sentiment||'unknown'}</span></div><div class="muted" style="margin-top:6px">${new Date(e.date).toLocaleDateString('nl-NL')} · ${e.articleCount||0} artikelen</div></div>`).join('');
+  }catch(e){document.getElementById('status').innerHTML='<span class="error">Data niet beschikbaar</span>';document.getElementById('dot').style.background='var(--red)';document.getElementById('forecasts').innerHTML='<div class="card error">De nieuwste modeldata kon niet worden geladen.</div>';}
+}
+load(); if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
+</script>
+</body></html>
