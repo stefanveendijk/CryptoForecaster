@@ -1,0 +1,3 @@
+# Local standalone runtime (never commit model data)
+.venv/
+local_data/
