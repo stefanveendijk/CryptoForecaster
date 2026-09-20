@@ -1,18 +1,24 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+title CryptoForecaster Local Server
 if not exist .venv\Scripts\python.exe (
-  echo Eerst install_windows_local.bat uitvoeren.
+  echo FOUT: lokale installatie ontbreekt.
+  echo Voer eerst install_windows_local.bat uit.
   pause
   exit /b 1
 )
 if not exist local_data mkdir local_data
 set DATA_DIR=%CD%\local_data
-set AUTO_RUN_MODEL=true
-set MODEL_HOUR_UTC=4
-set MODEL_MINUTE_UTC=15
+set AUTO_RUN_MODEL=false
 set MODEL_NEWS=true
 set MODEL_DEEP=false
-call .venv\Scripts\activate.bat
+echo.
+echo CryptoForecaster start lokaal op http://127.0.0.1:8080
+echo Laat dit venster open zolang je de lokale app gebruikt.
+echo.
 start "" http://127.0.0.1:8080/api/v1/dashboard
-python -m uvicorn cloud_server:app --host 127.0.0.1 --port 8080
+".venv\Scripts\python.exe" -m uvicorn cloud_server:app --host 127.0.0.1 --port 8080
+echo.
+echo De lokale server is gestopt of kon niet starten.
+pause
