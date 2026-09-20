@@ -42,6 +42,7 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 import requests
+from requests import HTTPError
 import yfinance as yf
 
 from scipy.stats import pearsonr, spearmanr
@@ -69,6 +70,8 @@ TRADING_COST = 0.001
 GDELT_START = pd.Timestamp("2017-01-01")
 GDELT_ENDPOINT = "https://api.gdeltproject.org/api/v2/doc/doc"
 NEWS_FEATURE_LAG_DAYS = 1
+GDELT_REQUEST_TIMEOUT = 15
+GDELT_DISABLED_FOR_RUN = False
 
 # Hoofdzoektermen. We vermijden "ether" vanwege veel niet-crypto false positives.
 COIN_QUERY = {
@@ -188,7 +191,10 @@ def add_price_features(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def _gdelt_request(query: str, mode: str, start: pd.Timestamp, end: pd.Timestamp,
-                   timeout: int = 90) -> dict:
+                   timeout: int = GDELT_REQUEST_TIMEOUT) -> dict:
+    global GDELT_DISABLED_FOR_RUN
+    if GDELT_DISABLED_FOR_RUN:
+        raise RuntimeError("GDELT uitgeschakeld voor deze run na rate-limit")
     params = {
         "query": query,
         "mode": mode,
@@ -200,6 +206,9 @@ def _gdelt_request(query: str, mode: str, start: pd.Timestamp, end: pd.Timestamp
         "User-Agent": "BTC-ETH-research-predictor/2.0 (personal research; low-frequency requests)"
     }
     r = requests.get(GDELT_ENDPOINT, params=params, headers=headers, timeout=timeout)
+    if r.status_code == 429:
+        GDELT_DISABLED_FOR_RUN = True
+        raise RuntimeError("GDELT rate-limit (HTTP 429); bron wordt voor de rest van deze run overgeslagen")
     r.raise_for_status()
 
     ctype = r.headers.get("content-type", "")
@@ -259,21 +268,20 @@ def fetch_gdelt_timeline(
     pieces = []
     cur = start
     while cur < end:
+        if GDELT_DISABLED_FOR_RUN:
+            print("  GDELT overgeslagen: rate-limit actief voor deze run.")
+            break
         nxt = min(cur + pd.Timedelta(days=chunk_days), end)
-        last_error = None
-        for attempt in range(3):
-            try:
-                payload = _gdelt_request(query, mode, cur, nxt)
-                frame = _parse_gdelt_timeline(payload, mode)
-                if not frame.empty:
-                    pieces.append(frame)
-                last_error = None
+        try:
+            payload = _gdelt_request(query, mode, cur, nxt)
+            frame = _parse_gdelt_timeline(payload, mode)
+            if not frame.empty:
+                pieces.append(frame)
+        except Exception as e:
+            print(f"WAARSCHUWING GDELT {cur.date()}–{nxt.date()}: {e}")
+            if GDELT_DISABLED_FOR_RUN:
+                print("  GDELT wordt niet opnieuw geprobeerd in deze run.")
                 break
-            except Exception as e:
-                last_error = e
-                time.sleep(1.5 * (attempt + 1))
-        if last_error is not None:
-            print(f"WAARSCHUWING GDELT {cur.date()}–{nxt.date()}: {last_error}")
         cur = nxt
         time.sleep(0.20)
 
