@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import trading_strategy
 import strategy_audit
+import portfolio_strategy
 from fastapi import FastAPI, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -376,6 +377,13 @@ def strategy(
         )
     except Exception as e:
         raise HTTPException(500,f"Strategieberekening mislukt: {e}")
+
+@app.get("/api/v1/portfolio-strategy")
+def portfolio_strategy_endpoint():
+    try:
+        return portfolio_strategy.build_portfolio_strategy(OUTPUT_DIR)
+    except Exception as e:
+        raise HTTPException(500,f"Portefeuillestrategie mislukt: {e}")
 
 @app.get("/api/v1/strategy-audit")
 def strategy_audit_endpoint(
