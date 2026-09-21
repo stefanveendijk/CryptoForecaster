@@ -53,6 +53,13 @@ canvas{width:100%;height:100%;display:block}
 .audit-check.ok{color:var(--good);border-color:#2c6b5a}
 .audit-check.no{color:var(--warn);border-color:#6b5a2c}
 .audit-meta{font-size:12px;color:var(--muted);line-height:1.55;margin-top:10px}
+.portfolio-grid{display:grid;grid-template-columns:1.15fr 2fr;gap:14px}
+.alloc-card{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:18px}
+.alloc-row{display:grid;grid-template-columns:90px 1fr 70px;gap:10px;align-items:center;margin-top:12px}
+.alloc-bar{height:12px;border-radius:999px;background:#0c1425;border:1px solid var(--line);overflow:hidden}
+.alloc-fill{height:100%;background:linear-gradient(90deg,#64b5ff,#4ed1a1)}
+.badge{display:inline-block;border:1px solid var(--line);background:var(--panel2);border-radius:999px;padding:6px 9px;font-size:12px;color:var(--muted);margin-right:6px;margin-top:6px}
+@media(max-width:950px){.portfolio-grid{grid-template-columns:1fr}}
 @media(max-width:950px){.signal-wrap{grid-template-columns:1fr}.signal-details{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:950px){.grid{grid-template-columns:repeat(2,1fr)}.stats{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:620px){header{display:block}.status{text-align:left;margin-top:12px}.grid{grid-template-columns:1fr}.stats{grid-template-columns:1fr 1fr}.refresh{margin-left:0}.chart-wrap{height:290px}.event{grid-template-columns:80px 1fr}}
@@ -111,6 +118,18 @@ canvas{width:100%;height:100%;display:block}
 <div class="section">
   <div class="section-head">
     <div>
+      <h2>Experimentele BTC/ETH/cash-portefeuille</h2>
+      <div class="sub">Rotatie tussen BTC, ETH en cash op basis van regime, modelkwaliteit en confidence</div>
+    </div>
+    <span class="sub">Vergelijkingslaag; bestaande live strategie blijft leidend</span>
+  </div>
+  <div id="portfolioBox" class="empty">Portefeuillestrategie wordt berekend…</div>
+  <div id="portfolioError" class="error"></div>
+</div>
+
+<div class="section">
+  <div class="section-head">
+    <div>
       <h2 id="chartTitle">Voorspelling versus werkelijkheid</h2>
       <div class="sub" id="chartSub">Historische out-of-sample voorspellingen</div>
     </div>
@@ -133,7 +152,7 @@ canvas{width:100%;height:100%;display:block}
 </div>
 
 <script>
-let dashboard=null, strategy=null, audit=null, selectedCoin='BTC', selectedHorizon=7, historyPoints=[];
+let dashboard=null, strategy=null, audit=null, portfolio=null, selectedCoin='BTC', selectedHorizon=7, historyPoints=[];
 let actualPositions={BTC:0,ETH:0};
 
 const euro=v=>{
@@ -361,6 +380,93 @@ function renderAudit(){
     </div>`;
 }
 
+
+async function loadPortfolio(){
+  const box=document.getElementById('portfolioBox'),err=document.getElementById('portfolioError');
+  err.textContent='';
+  box.className='empty';
+  box.textContent='Portefeuillestrategie wordt berekend…';
+  try{
+    const r=await fetch('/api/v1/portfolio-strategy',{cache:'no-store'});
+    if(!r.ok){
+      let msg='Portefeuillestrategie niet beschikbaar.';
+      try{const j=await r.json(); if(j.detail) msg=j.detail;}catch(_){}
+      throw new Error(msg);
+    }
+    portfolio=await r.json();
+    renderPortfolio();
+  }catch(e){
+    portfolio=null;
+    box.className='empty';
+    box.textContent='';
+    err.textContent=e.message||String(e);
+  }
+}
+
+function renderPortfolio(){
+  const box=document.getElementById('portfolioBox');
+  if(!portfolio) return;
+  if(!portfolio.available){
+    box.className='empty';
+    box.textContent=portfolio.reason||'Nog onvoldoende gegevens voor de portefeuillestrategie.';
+    return;
+  }
+  box.className='';
+  const a=portfolio.recommendedAllocation||{},m=portfolio.backtest||{},r=portfolio.last12Months||{};
+  const q=portfolio.quality||{},cf=portfolio.confidence||{},sc=portfolio.scores||{},ch=portfolio.checks||{};
+  const years=portfolio.calendarYears||[];
+  const stress=(portfolio.costStress||[]).map(x=>`${pct(x.transactionCost)} → CAGR ${pct(x.cagr)}`).join(' · ');
+  const alloc=(label,v)=>`
+    <div class="alloc-row">
+      <span>${label}</span>
+      <div class="alloc-bar"><div class="alloc-fill" style="width:${Math.max(0,Math.min(100,(Number(v)||0)*100))}%"></div></div>
+      <b>${pct(v)}</b>
+    </div>`;
+
+  box.innerHTML=`
+    <div class="portfolio-grid">
+      <div class="alloc-card">
+        <div class="signal-label">Modeldoel portefeuille</div>
+        ${alloc('Bitcoin',a.BTC)}
+        ${alloc('Ethereum',a.ETH)}
+        ${alloc('Cash',a.cash)}
+        <div class="audit-meta">
+          Regime: <b>${portfolio.regime||'—'}</b> · maximale blootstelling ${pct(portfolio.exposureCap)}.<br>
+          BTC sterkte ${num(sc.BTC,2)}, kwaliteit ${pct(q.BTC)}, confidence ${pct(cf.BTC)}.<br>
+          ETH sterkte ${num(sc.ETH,2)}, kwaliteit ${pct(q.ETH)}, confidence ${pct(cf.ETH)}.
+        </div>
+      </div>
+      <div>
+        <div class="signal-details">
+          <div class="stat"><div class="l">Portfolio OOS CAGR</div><div class="n">${pct(m.cagr)}</div></div>
+          <div class="stat"><div class="l">50/50 buy & hold CAGR</div><div class="n">${pct(m.benchmarkCagr)}</div></div>
+          <div class="stat"><div class="l">Portfolio max. drawdown</div><div class="n">${pct(m.maxDrawdown)}</div></div>
+          <div class="stat"><div class="l">Portfolio Sharpe</div><div class="n">${num(m.sharpe,2)}</div></div>
+          <div class="stat"><div class="l">Laatste 12 mnd</div><div class="n">${pct(r.totalReturn)}</div></div>
+          <div class="stat"><div class="l">Positieve OOS-jaren</div><div class="n">${portfolio.positiveYears??0}/${years.length}</div></div>
+        </div>
+        <div class="audit-checks">
+          <span class="audit-check">100%-doel</span>${yn(ch.annualTargetReached)}
+          <span class="audit-check">Beter dan 50/50 buy & hold</span>${yn(ch.beatsEqualWeightBuyHold)}
+          <span class="audit-check">Drawdown ≤ 35%</span>${yn(ch.maxDrawdownBelow35Pct)}
+          <span class="audit-check">Meerderheid positieve jaren</span>${yn(ch.majorityPositiveYears)}
+        </div>
+        <div class="audit-meta">
+          Gemiddeld belegd: ${pct(m.averageInvested)} · BTC ${pct(m.averageBTC)} ·
+          ETH ${pct(m.averageETH)} · cash ${pct(m.averageCash)} ·
+          allocatiewijzigingen: ${m.allocationChanges??'—'}.<br>
+          Kostenstress: ${stress||'—'}.
+        </div>
+        <div class="signal-note">
+          Deze laag roteert alleen tussen BTC, ETH en cash; er wordt geen leverage gebruikt.
+          Regime, kwaliteit en confidence worden uitsluitend uit informatie berekend die op dat
+          moment beschikbaar was. De bestaande live handelsstrategie blijft voorlopig leidend
+          totdat deze portefeuillevariant aantoonbaar robuuster presteert.
+        </div>
+      </div>
+    </div>`;
+}
+
 async function loadHistory(){
   const err=document.getElementById('historyError');
   err.textContent='';
@@ -458,7 +564,7 @@ async function loadAll(){
     dashboard=await r.json();
     document.getElementById('statusText').textContent=dashboard.source==='live'?'Modeldata beschikbaar':'Wachten op modeldata';
     document.getElementById('updated').textContent='Modeldatum: '+fmtDate(dashboard.updatedAt);
-    renderForecasts();renderEvents();await loadStrategy();await loadAudit();await loadHistory();
+    renderForecasts();renderEvents();await loadStrategy();await loadAudit();await loadPortfolio();await loadHistory();
   }catch(e){
     document.getElementById('statusText').textContent='Fout bij laden';
     document.getElementById('forecastGrid').innerHTML='<div class="error">'+String(e)+'</div>';
