@@ -62,6 +62,8 @@ canvas{width:100%;height:100%;display:block}
 .kraken-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
 .kraken-card{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:15px}
 .kraken-price{font-size:25px;font-weight:750;margin:5px 0 9px}
+.price-guard{margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:11px 12px;background:#0e1729;font-size:13px;line-height:1.5}
+.price-guard.good{border-color:#2c6b5a}.price-guard.warn{border-color:#6b5a2c}.price-guard .guard-title{font-weight:700;margin-bottom:4px}
 @media(max-width:620px){.kraken-grid{grid-template-columns:1fr}}
 @media(max-width:950px){.portfolio-grid{grid-template-columns:1fr}}
 @media(max-width:950px){.signal-wrap{grid-template-columns:1fr}.signal-details{grid-template-columns:repeat(2,1fr)}}
@@ -118,6 +120,7 @@ canvas{width:100%;height:100%;display:block}
     </div>
   </div>
   <div id="strategyBox" class="empty">Strategie wordt berekend…</div>
+  <div id="priceGuard"></div>
   <div id="strategyError" class="error"></div>
 </div>
 
@@ -231,6 +234,7 @@ async function loadKraken(){
     }
     kraken=await r.json();
     renderKraken();
+    renderPriceGuard();
   }catch(e){
     err.textContent=e.message||String(e);
   }
@@ -256,6 +260,20 @@ function renderKraken(){
   if(kraken.warning) err.textContent=kraken.warning;
 }
 
+function signalAnchorKey(coin){return 'cf_buy_anchor_'+coin;}
+function readSignalAnchor(coin){try{return JSON.parse(localStorage.getItem(signalAnchorKey(coin))||'null');}catch(_){return null}}
+function writeSignalAnchor(coin,obj){localStorage.setItem(signalAnchorKey(coin),JSON.stringify(obj));}
+function clearSignalAnchor(coin){localStorage.removeItem(signalAnchorKey(coin));}
+function renderPriceGuard(){
+ const box=document.getElementById('priceGuard'); if(!box)return; box.innerHTML=''; box.className='';
+ if(!strategy||!kraken)return; const coin=selectedCoin,q=kraken[coin]||{},ask=Number(q.ask); if(!Number.isFinite(ask))return;
+ const signal=String(strategy.signal||''), modelDate=(forecastFor(coin,7)||{}).date||dashboard?.updatedAt||''; let anchor=readSignalAnchor(coin);
+ if(signal==='KOPEN'&&(!anchor||anchor.modelDate!==modelDate||!Number.isFinite(Number(anchor.price)))){anchor={price:ask,modelDate:modelDate,createdAt:new Date().toISOString()};writeSignalAnchor(coin,anchor);} else if(signal==='VERKOPEN'){clearSignalAnchor(coin);anchor=null;}
+ if((signal!=='KOPEN'&&!anchor)||!anchor||!Number.isFinite(Number(anchor.price)))return;
+ const anchorPrice=Number(anchor.price),reviewPrice=anchorPrice*1.02,moved=ask/anchorPrice-1,needsReview=ask>reviewPrice;
+ box.className='price-guard '+(needsReview?'warn':'good');
+ box.innerHTML='<div class="guard-title">Prijsbewaker voor '+coin+'</div><div>Koopprijs toen het KOPEN-signaal ontstond: <b>'+eur(anchorPrice)+'</b></div><div>Actuele Kraken-koopprijs: <b>'+eur(ask)+'</b> ('+pct(moved)+' sinds het signaal)</div><div>Boven <b>'+eur(reviewPrice)+'</b> beschouwen we het oorspronkelijke signaal als verouderd en moet de app eerst opnieuw rekenen.</div><div style="margin-top:5px"><b>'+(needsReview?'Opnieuw beoordelen vóór aankoop.':'Signaalprijs ligt nog binnen de ingestelde marge.')+'</b></div>';
+}
 function metricFor(coin,h){
   return (dashboard?.metrics||[]).find(x=>x.coin===coin&&Number(x.horizon)===Number(h))||{};
 }
@@ -330,6 +348,7 @@ async function loadStrategy(){
     }
     strategy=await r.json();
     renderStrategy();
+    renderPriceGuard();
   }catch(e){
     strategy=null;
     box.className='empty';
