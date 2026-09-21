@@ -19,6 +19,12 @@ ANNUAL_TARGET = ts.ANNUAL_TARGET
 # Totale portefeuilleblootstelling. De strategie kiest alleen uit deze niveaus.
 EXPOSURE_LEVELS = [0.0, 0.25, 0.50, 0.75, 1.0]
 
+# Portfolio v2: rustiger handelen.
+MIN_HOLD_DAYS = 7
+ROTATION_EDGE = 0.12
+QUALITY_FLOOR = 0.50
+EMERGENCY_RISK_SCORE = -0.12
+
 
 def _clean(v):
     try:
@@ -264,7 +270,7 @@ def _portfolio_metrics(frame: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def backtest_portfolio(output_dir: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
+def backtest_portfolio_v1(output_dir: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
     btc = _coin_history(output_dir, "BTC")
     eth = _coin_history(output_dir, "ETH")
     if btc.empty or eth.empty:
@@ -307,6 +313,164 @@ def backtest_portfolio(output_dir: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
     )
     frame["benchmark_return"] = 0.5 * frame["btc_return"] + 0.5 * frame["eth_return"]
     return frame, _portfolio_metrics(frame)
+
+
+
+def _dominant_asset(btc_w: float, eth_w: float) -> str:
+    if btc_w <= 1e-9 and eth_w <= 1e-9:
+        return "cash"
+    return "BTC" if btc_w >= eth_w else "ETH"
+
+
+def _v2_next_allocation(
+    btc_score: float,
+    eth_score: float,
+    btc_quality: float,
+    eth_quality: float,
+    cap: float,
+    current: tuple[float, float, float],
+    days_since_change: int,
+) -> tuple[float, float, float, bool]:
+    current_btc, current_eth, current_cash = current
+
+    # Een munt met te lage historische modelkwaliteit krijgt geen nieuw kapitaal.
+    btc_for_alloc = btc_score if btc_quality >= QUALITY_FLOOR else min(0.0, btc_score)
+    eth_for_alloc = eth_score if eth_quality >= QUALITY_FLOOR else min(0.0, eth_score)
+
+    desired = _allocate(btc_for_alloc, eth_for_alloc, cap)
+    desired_btc, desired_eth, desired_cash = desired
+
+    emergency = (
+        cap <= 0.25
+        or (btc_score <= EMERGENCY_RISK_SCORE and eth_score <= EMERGENCY_RISK_SCORE)
+    )
+
+    # Bij echt zwakke markt mag direct naar cash, ook binnen de 7 dagen.
+    if emergency:
+        target_total = min(desired_btc + desired_eth, cap)
+        if target_total <= 0.25:
+            desired = (
+                desired_btc,
+                desired_eth,
+                1.0 - desired_btc - desired_eth,
+            )
+            changed = (
+                abs(desired[0] - current_btc)
+                + abs(desired[1] - current_eth)
+            ) > 1e-9
+            return desired[0], desired[1], desired[2], changed
+
+    if days_since_change < MIN_HOLD_DAYS:
+        return current_btc, current_eth, current_cash, False
+
+    current_asset = _dominant_asset(current_btc, current_eth)
+    desired_asset = _dominant_asset(desired_btc, desired_eth)
+
+    # Wissel alleen BTC <-> ETH als de nieuwe munt duidelijk sterker is.
+    if (
+        current_asset in {"BTC", "ETH"}
+        and desired_asset in {"BTC", "ETH"}
+        and current_asset != desired_asset
+    ):
+        current_score = btc_score if current_asset == "BTC" else eth_score
+        desired_score = btc_score if desired_asset == "BTC" else eth_score
+        if desired_score - current_score < ROTATION_EDGE:
+            return current_btc, current_eth, current_cash, False
+
+    current_total = current_btc + current_eth
+    desired_total = desired_btc + desired_eth
+
+    # Kleine verschillen in totale blootstelling negeren.
+    if abs(desired_total - current_total) < 0.24 and current_asset == desired_asset:
+        return current_btc, current_eth, current_cash, False
+
+    changed = (
+        abs(desired_btc - current_btc) + abs(desired_eth - current_eth)
+    ) > 1e-9
+    return desired_btc, desired_eth, desired_cash, changed
+
+
+def backtest_portfolio_v2(output_dir: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
+    btc = _coin_history(output_dir, "BTC")
+    eth = _coin_history(output_dir, "ETH")
+    if btc.empty or eth.empty:
+        return pd.DataFrame(), {}
+
+    regime = _regime_series(btc)
+    idx = btc.index.intersection(eth.index).intersection(regime.index)
+    frame = pd.DataFrame(index=idx)
+    frame["btc_score"] = btc["effective_score"].reindex(idx)
+    frame["eth_score"] = eth["effective_score"].reindex(idx)
+    frame["btc_quality"] = btc["quality"].reindex(idx)
+    frame["eth_quality"] = eth["quality"].reindex(idx)
+    frame["btc_confidence"] = btc["confidence"].reindex(idx)
+    frame["eth_confidence"] = eth["confidence"].reindex(idx)
+    frame["btc_return"] = btc["next_return"].reindex(idx)
+    frame["eth_return"] = eth["next_return"].reindex(idx)
+    frame["regime"] = regime["regime"].reindex(idx)
+    frame["exposure_cap"] = regime["exposure_cap"].reindex(idx)
+    frame = frame.dropna(
+        subset=[
+            "btc_score", "eth_score", "btc_quality", "eth_quality",
+            "btc_return", "eth_return", "exposure_cap",
+        ]
+    )
+
+    if len(frame) < 120:
+        return pd.DataFrame(), {}
+
+    current = (0.0, 0.0, 1.0)
+    days_since_change = MIN_HOLD_DAYS
+    rows = []
+
+    for dt, r in frame.iterrows():
+        btc_w, eth_w, cash_w, changed = _v2_next_allocation(
+            float(r["btc_score"]),
+            float(r["eth_score"]),
+            float(r["btc_quality"]),
+            float(r["eth_quality"]),
+            float(r["exposure_cap"]),
+            current,
+            days_since_change,
+        )
+
+        turnover = abs(btc_w - current[0]) + abs(eth_w - current[1])
+        strategy_return = (
+            btc_w * float(r["btc_return"])
+            + eth_w * float(r["eth_return"])
+            - turnover * TRANSACTION_COST
+        )
+        benchmark_return = 0.5 * float(r["btc_return"]) + 0.5 * float(r["eth_return"])
+
+        if changed:
+            days_since_change = 0
+        else:
+            days_since_change += 1
+
+        current = (btc_w, eth_w, cash_w)
+        rows.append({
+            "date": dt,
+            "btc_score": float(r["btc_score"]),
+            "eth_score": float(r["eth_score"]),
+            "btc_quality": float(r["btc_quality"]),
+            "eth_quality": float(r["eth_quality"]),
+            "btc_confidence": float(r["btc_confidence"]),
+            "eth_confidence": float(r["eth_confidence"]),
+            "btc_return": float(r["btc_return"]),
+            "eth_return": float(r["eth_return"]),
+            "regime": str(r["regime"]),
+            "exposure_cap": float(r["exposure_cap"]),
+            "btc_weight": btc_w,
+            "eth_weight": eth_w,
+            "cash_weight": cash_w,
+            "turnover": turnover,
+            "strategy_return": strategy_return,
+            "benchmark_return": benchmark_return,
+            "days_since_change": days_since_change,
+        })
+
+    out = pd.DataFrame(rows).set_index("date")
+    return out, _portfolio_metrics(out)
 
 
 def _latest_model_quality(output_dir: Path, coin: str) -> dict[int, float]:
@@ -412,7 +576,8 @@ def _cost_stress(frame: pd.DataFrame) -> list[dict[str, Any]]:
 
 
 def build_portfolio_strategy(output_dir: Path) -> dict[str, Any]:
-    frame, full = backtest_portfolio(output_dir)
+    frame, full = backtest_portfolio_v2(output_dir)
+    old_frame, old_metrics = backtest_portfolio_v1(output_dir)
     if frame.empty:
         return {
             "available": False,
@@ -433,8 +598,38 @@ def build_portfolio_strategy(output_dir: Path) -> dict[str, Any]:
     if btc_score is None or eth_score is None:
         btc_w = eth_w = 0.0
         cash_w = 1.0
+        days_since_change = MIN_HOLD_DAYS
     else:
-        btc_w, eth_w, cash_w = _allocate(btc_score, eth_score, cap)
+        if frame.empty:
+            current = (0.0, 0.0, 1.0)
+            days_since_change = MIN_HOLD_DAYS
+        else:
+            last = frame.iloc[-1]
+            current = (
+                float(last["btc_weight"]),
+                float(last["eth_weight"]),
+                float(last["cash_weight"]),
+            )
+            days_since_change = int(last.get("days_since_change", MIN_HOLD_DAYS))
+
+        # Voor de actuele aanbeveling gebruiken we de meest recente historische
+        # kwaliteitsmeting uit de v2-backtest als veilige benadering.
+        if frame.empty:
+            hist_btc_quality = btc_quality if btc_quality is not None else 0.5
+            hist_eth_quality = eth_quality if eth_quality is not None else 0.5
+        else:
+            hist_btc_quality = float(frame["btc_quality"].iloc[-1])
+            hist_eth_quality = float(frame["eth_quality"].iloc[-1])
+
+        btc_w, eth_w, cash_w, _ = _v2_next_allocation(
+            btc_score,
+            eth_score,
+            hist_btc_quality,
+            hist_eth_quality,
+            cap,
+            current,
+            days_since_change,
+        )
 
     recent = _recent_metrics(frame, 365)
     years = _year_rows(frame)
@@ -443,6 +638,7 @@ def build_portfolio_strategy(output_dir: Path) -> dict[str, Any]:
     return {
         "available": True,
         "experimental": True,
+        "version": "v2",
         "recommendedAllocation": {
             "BTC": btc_w,
             "ETH": eth_w,
@@ -463,6 +659,7 @@ def build_portfolio_strategy(output_dir: Path) -> dict[str, Any]:
             "ETH": eth_conf,
         },
         "backtest": full,
+        "previousVersionBacktest": old_metrics,
         "last12Months": recent,
         "calendarYears": years,
         "positiveYears": positive_years,
@@ -484,6 +681,9 @@ def build_portfolio_strategy(output_dir: Path) -> dict[str, Any]:
         "costStress": _cost_stress(frame),
         "method": {
             "positionLevels": EXPOSURE_LEVELS,
+            "minimumHoldDays": MIN_HOLD_DAYS,
+            "rotationDifferenceRequired": ROTATION_EDGE,
+            "minimumModelQuality": QUALITY_FLOOR,
             "qualityLookbackDays": QUALITY_LOOKBACK,
             "regime": "BTC pseudo-price MA50/MA200 plus 30d realized volatility, all lagged.",
             "benchmark": "50/50 BTC/ETH buy & hold over dezelfde OOS-periode.",
@@ -491,7 +691,9 @@ def build_portfolio_strategy(output_dir: Path) -> dict[str, Any]:
                 "Experimentele BTC/ETH/cash-rotatie. Modelkwaliteit wordt uitsluitend uit "
                 "eerdere OOS-uitkomsten afgeleid. Regime gebruikt alleen reeds gerealiseerde "
                 "rendementen. Totale blootstelling is 0/25/50/75/100%; kapitaal gaat naar "
-                "BTC en/of ETH op basis van kwaliteit- en confidence-gewogen signaalsterkte."
+                "BTC en/of ETH op basis van kwaliteit- en confidence-gewogen signaalsterkte. "
+                "Versie 2 handelt rustiger: minimaal 7 dagen vasthouden, alleen roteren bij "
+                "een duidelijk verschil en sneller risico afbouwen in zwakke markten."
             ),
         },
     }
