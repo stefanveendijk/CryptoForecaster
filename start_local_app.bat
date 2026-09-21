@@ -61,5 +61,6 @@ exit /b 1
 :ready
 echo Server gereed.
 echo Dashboard wordt geopend op http://127.0.0.1:8080/
-start "" "http://127.0.0.1:8080/"
+set "CACHEBUST=%RANDOM%%RANDOM%"
+start "" "http://127.0.0.1:8080/?v=%CACHEBUST%"
 exit /b 0
