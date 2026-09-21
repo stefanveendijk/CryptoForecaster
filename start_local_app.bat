@@ -28,6 +28,14 @@ if not exist "strategy_audit.py" (
   exit /b 1
 )
 
+findstr /C:"Strategie-audit" "local_dashboard.html" >nul 2>nul
+if errorlevel 1 (
+  echo FOUT: local_dashboard.html is nog een oude versie zonder Strategie-audit.
+  echo Voer update_cryptoforecaster.bat opnieuw uit.
+  pause
+  exit /b 1
+)
+
 if not exist local_data mkdir local_data
 set "DATA_DIR=%CD%\local_data"
 set "AUTO_RUN_MODEL=false"
