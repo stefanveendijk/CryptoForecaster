@@ -48,6 +48,11 @@ canvas{width:100%;height:100%;display:block}
 .position-choice{display:flex;gap:8px;flex-wrap:wrap}
 .position-choice button{padding:7px 12px}
 .position-choice button.active{background:#2b4770;border-color:#6a9bd2}
+.audit-checks{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.audit-check{border:1px solid var(--line);background:var(--panel2);border-radius:999px;padding:7px 10px;font-size:12px}
+.audit-check.ok{color:var(--good);border-color:#2c6b5a}
+.audit-check.no{color:var(--warn);border-color:#6b5a2c}
+.audit-meta{font-size:12px;color:var(--muted);line-height:1.55;margin-top:10px}
 @media(max-width:950px){.signal-wrap{grid-template-columns:1fr}.signal-details{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:950px){.grid{grid-template-columns:repeat(2,1fr)}.stats{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:620px){header{display:block}.status{text-align:left;margin-top:12px}.grid{grid-template-columns:1fr}.stats{grid-template-columns:1fr 1fr}.refresh{margin-left:0}.chart-wrap{height:290px}.event{grid-template-columns:80px 1fr}}
@@ -94,6 +99,18 @@ canvas{width:100%;height:100%;display:block}
 <div class="section">
   <div class="section-head">
     <div>
+      <h2>Strategie-audit</h2>
+      <div class="sub">Walk-forward controle op rendement, drawdown, stabiliteit en overfitting</div>
+    </div>
+    <span class="sub">Live drempels worden hierdoor nog niet automatisch gewijzigd</span>
+  </div>
+  <div id="auditBox" class="empty">Strategietest wordt berekend…</div>
+  <div id="auditError" class="error"></div>
+</div>
+
+<div class="section">
+  <div class="section-head">
+    <div>
       <h2 id="chartTitle">Voorspelling versus werkelijkheid</h2>
       <div class="sub" id="chartSub">Historische out-of-sample voorspellingen</div>
     </div>
@@ -116,7 +133,7 @@ canvas{width:100%;height:100%;display:block}
 </div>
 
 <script>
-let dashboard=null, strategy=null, selectedCoin='BTC', selectedHorizon=7, historyPoints=[];
+let dashboard=null, strategy=null, audit=null, selectedCoin='BTC', selectedHorizon=7, historyPoints=[];
 let actualPositions={BTC:0,ETH:0};
 
 const euro=v=>{
@@ -164,6 +181,7 @@ function setCoin(c){
   renderEvents();
   renderPositionButtons();
   loadStrategy();
+  loadAudit();
   loadHistory();
 }
 function setHorizon(h){
@@ -270,6 +288,79 @@ function renderStrategy(){
     </div>`;
 }
 
+
+function yn(v){return v?'<span class="audit-check ok">✓ ja</span>':'<span class="audit-check no">– nee</span>';}
+
+async function loadAudit(){
+  const box=document.getElementById('auditBox'),err=document.getElementById('auditError');
+  err.textContent='';
+  box.className='empty';
+  box.textContent='Strategietest wordt berekend…';
+  try{
+    const r=await fetch(`/api/v1/strategy-audit?coin=${selectedCoin}`,{cache:'no-store'});
+    if(!r.ok){
+      let msg='Strategie-audit niet beschikbaar.';
+      try{const j=await r.json(); if(j.detail) msg=j.detail;}catch(_){}
+      throw new Error(msg);
+    }
+    audit=await r.json();
+    renderAudit();
+  }catch(e){
+    audit=null;
+    box.className='empty';
+    box.textContent='';
+    err.textContent=e.message||String(e);
+  }
+}
+
+function renderAudit(){
+  const box=document.getElementById('auditBox');
+  if(!audit){return}
+  if(!audit.available){
+    box.className='empty';
+    box.textContent=audit.reason||'Nog onvoldoende gegevens voor de strategie-audit.';
+    return;
+  }
+  box.className='';
+  const wf=audit.walkForward||{},fx=audit.fixedStrategySamePeriod||{},ch=audit.checks||{};
+  const years=audit.calendarYears||[];
+  const st=audit.thresholdStability||{};
+  const p=audit.latestSelectedThresholds||{};
+  const stress=(audit.costStressFixedStrategy||[]).map(x=>
+    `${pct(x.transactionCost)} kosten → CAGR ${pct(x.cagr)}`
+  ).join(' · ');
+  box.innerHTML=`
+    <div class="signal-details">
+      <div class="stat"><div class="l">Walk-forward CAGR</div><div class="n">${pct(wf.cagr)}</div></div>
+      <div class="stat"><div class="l">Vaste strategie CAGR</div><div class="n">${pct(fx.cagr)}</div></div>
+      <div class="stat"><div class="l">Buy & hold CAGR</div><div class="n">${pct(wf.buyHoldCagr)}</div></div>
+      <div class="stat"><div class="l">Walk-forward max. drawdown</div><div class="n">${pct(wf.maxDrawdown)}</div></div>
+      <div class="stat"><div class="l">Walk-forward Sharpe</div><div class="n">${num(wf.sharpe,2)}</div></div>
+      <div class="stat"><div class="l">Positieve testjaren</div><div class="n">${audit.positiveYears??0}/${years.length}</div></div>
+    </div>
+    <div class="audit-checks">
+      <span class="audit-check">100%-doel</span>${yn(ch.annualTargetReached)}
+      <span class="audit-check">Beter dan buy & hold</span>${yn(ch.beatsBuyHoldCagr)}
+      <span class="audit-check">Drawdown ≤ 35%</span>${yn(ch.maxDrawdownBelow35Pct)}
+      <span class="audit-check">Min. 4 testblokken</span>${yn(ch.enoughWalkForwardFolds)}
+      <span class="audit-check">Meerderheid positieve jaren</span>${yn(ch.majorityPositiveYears)}
+    </div>
+    <div class="audit-meta">
+      Testperiode: <b>${audit.testStart}</b> t/m <b>${audit.testEnd}</b> ·
+      ${audit.foldCount} walk-forward testblokken · ${audit.method?.candidateSets??'—'} drempelsets getest.<br>
+      Laatst geselecteerde drempels (nog niet live toegepast):
+      half ${num(p.buyHalf,2)}, vol ${num(p.buyFull,2)}, afbouw ${num(p.trim,2)}, verkoop ${num(p.sell,2)}.
+      Stabiliteit meest gekozen set: ${pct(st.mostCommonShare)}.<br>
+      Kostenstress vaste strategie: ${stress||'—'}.
+    </div>
+    <div class="signal-note">
+      De +100%-jaardoelstelling wordt alleen als benchmark gecontroleerd en niet gebruikt om
+      de drempels te kiezen. Daarmee voorkomen we dat de strategie kunstmatig naar het gewenste
+      rendement wordt gefit. Pas als de walk-forward resultaten voldoende robuust zijn, is het
+      zinvol de live koop/verkoopdrempels te wijzigen.
+    </div>`;
+}
+
 async function loadHistory(){
   const err=document.getElementById('historyError');
   err.textContent='';
@@ -367,7 +458,7 @@ async function loadAll(){
     dashboard=await r.json();
     document.getElementById('statusText').textContent=dashboard.source==='live'?'Modeldata beschikbaar':'Wachten op modeldata';
     document.getElementById('updated').textContent='Modeldatum: '+fmtDate(dashboard.updatedAt);
-    renderForecasts();renderEvents();await loadStrategy();await loadHistory();
+    renderForecasts();renderEvents();await loadStrategy();await loadAudit();await loadHistory();
   }catch(e){
     document.getElementById('statusText').textContent='Fout bij laden';
     document.getElementById('forecastGrid').innerHTML='<div class="error">'+String(e)+'</div>';
