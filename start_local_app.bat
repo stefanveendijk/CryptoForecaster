@@ -22,6 +22,12 @@ if not exist "trading_strategy.py" (
   exit /b 1
 )
 
+if not exist "strategy_audit.py" (
+  echo FOUT: strategy_audit.py ontbreekt. Werk de app eerst bij.
+  pause
+  exit /b 1
+)
+
 if not exist local_data mkdir local_data
 set "DATA_DIR=%CD%\local_data"
 set "AUTO_RUN_MODEL=false"
