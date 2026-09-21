@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CryptoForecaster Local</title>
+<style>
+:root{
+  --bg:#0b1020;--panel:#121a2d;--panel2:#17223a;--text:#eef3ff;--muted:#9dabc8;
+  --line:#2a3654;--accent:#64b5ff;--good:#4ed1a1;--bad:#ff7b85;--warn:#f6c86b;
+}
+*{box-sizing:border-box}
+body{margin:0;background:linear-gradient(180deg,#09101f,#0d1425 35%,#0b1020);color:var(--text);
+  font-family:Inter,Segoe UI,Arial,sans-serif;min-height:100vh}
+.wrap{max-width:1280px;margin:0 auto;padding:26px 22px 46px}
+header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:22px}
+h1{margin:0;font-size:28px;letter-spacing:-.5px}.sub{color:var(--muted);margin-top:6px;font-size:14px}
+.status{text-align:right;color:var(--muted);font-size:13px}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--good);margin-right:7px}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}
+button{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:9px 14px;border-radius:10px;cursor:pointer}
+button.active{background:#223557;border-color:#4b75ae}.refresh{margin-left:auto}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.card{background:rgba(18,26,45,.94);border:1px solid var(--line);border-radius:14px;padding:16px;cursor:pointer;min-height:184px}
+.card.active{border-color:#5c91ce;box-shadow:0 0 0 1px #5c91ce inset}
+.card h3{margin:0 0 10px;font-size:16px}.big{font-size:27px;font-weight:700;margin:4px 0}.muted{color:var(--muted)}
+.row{display:flex;justify-content:space-between;gap:12px;font-size:13px;margin-top:8px}.value{font-variant-numeric:tabular-nums}
+.up{color:var(--good)}.down{color:var(--bad)}.neutral{color:var(--warn)}
+.section{background:rgba(18,26,45,.94);border:1px solid var(--line);border-radius:14px;margin-top:14px;padding:18px}
+.section-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:8px}
+.section h2{font-size:18px;margin:0}.chart-wrap{height:350px;position:relative}
+canvas{width:100%;height:100%;display:block}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px}
+.stat{background:var(--panel2);border:1px solid var(--line);padding:12px;border-radius:10px}
+.stat .n{font-size:20px;font-weight:700;margin-top:3px}.stat .l{font-size:12px;color:var(--muted)}
+.events{display:grid;gap:8px}.event{display:grid;grid-template-columns:90px 1fr 110px;gap:12px;border-top:1px solid var(--line);padding:10px 0;font-size:13px}
+.empty{color:var(--muted);padding:24px 4px}.error{color:var(--bad);padding:12px 0}
+.legend{display:flex;gap:16px;font-size:12px;color:var(--muted);align-items:center}.sw{display:inline-block;width:18px;height:3px;margin-right:5px;vertical-align:middle}
+@media(max-width:950px){.grid{grid-template-columns:repeat(2,1fr)}.stats{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:620px){header{display:block}.status{text-align:left;margin-top:12px}.grid{grid-template-columns:1fr}.stats{grid-template-columns:1fr 1fr}.refresh{margin-left:0}.chart-wrap{height:290px}.event{grid-template-columns:80px 1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div><h1>CryptoForecaster</h1><div class="sub">Lokale BTC/ETH voorspellingen · 1, 7, 30 en 90 dagen</div></div>
+  <div class="status"><div><span class="dot"></span><span id="statusText">Lokale server actief</span></div><div id="updated">Laden…</div></div>
+</header>
+
+<div class="toolbar">
+  <button id="btcBtn" class="active" onclick="setCoin('BTC')">Bitcoin</button>
+  <button id="ethBtn" onclick="setCoin('ETH')">Ethereum</button>
+  <button class="refresh" onclick="loadAll()">Vernieuwen</button>
+</div>
+
+<div id="forecastGrid" class="grid"></div>
+
+<div class="section">
+  <div class="section-head">
+    <div>
+      <h2 id="chartTitle">Voorspelling versus werkelijkheid</h2>
+      <div class="sub" id="chartSub">Historische out-of-sample voorspellingen</div>
+    </div>
+    <div class="legend">
+      <span><i class="sw" style="background:#64b5ff"></i>Voorspeld</span>
+      <span><i class="sw" style="background:#4ed1a1"></i>Werkelijk</span>
+    </div>
+  </div>
+  <div class="chart-wrap"><canvas id="historyChart"></canvas></div>
+  <div id="historyStats" class="stats"></div>
+  <div id="historyError" class="error"></div>
+</div>
+
+<div class="section">
+  <div class="section-head"><h2>Recente gebeurtenissen</h2><span class="sub">Nieuws/eventlaag van het model</span></div>
+  <div id="events" class="events"></div>
+</div>
+
+<div class="sub" style="margin-top:18px">Onderzoeksmodel; geen beleggingsadvies of rendementsbelofte. Historische prestaties zijn out-of-sample en geen garantie voor toekomstige prestaties.</div>
+</div>
+
+<script>
+let dashboard=null, selectedCoin='BTC', selectedHorizon=7, historyPoints=[];
+
+const euro=v=>{
+  if(v===null||v===undefined||!Number.isFinite(Number(v))) return '—';
+  const n=Number(v);
+  return new Intl.NumberFormat('nl-NL',{style:'currency',currency:'USD',maximumFractionDigits:n>=1000?0:2}).format(n);
+};
+const pct=v=>v===null||v===undefined||!Number.isFinite(Number(v))?'—':(Number(v)*100).toFixed(1)+'%';
+const num=(v,d=3)=>v===null||v===undefined||!Number.isFinite(Number(v))?'—':Number(v).toFixed(d);
+const fmtDate=s=>{if(!s)return '—';const d=new Date(s);return isNaN(d)?String(s):d.toLocaleDateString('nl-NL');};
+
+function metricFor(coin,h){
+  return (dashboard?.metrics||[]).find(x=>x.coin===coin&&Number(x.horizon)===Number(h))||{};
+}
+function forecastFor(coin,h){
+  return (dashboard?.forecasts||[]).find(x=>x.coin===coin&&Number(x.horizon)===Number(h));
+}
+function setCoin(c){
+  selectedCoin=c;
+  document.getElementById('btcBtn').classList.toggle('active',c==='BTC');
+  document.getElementById('ethBtn').classList.toggle('active',c==='ETH');
+  renderForecasts();
+  loadHistory();
+}
+function setHorizon(h){
+  selectedHorizon=Number(h);
+  renderForecasts();
+  loadHistory();
+}
+
+function renderForecasts(){
+  const grid=document.getElementById('forecastGrid');
+  const horizons=[1,7,30,90];
+  grid.innerHTML='';
+  for(const h of horizons){
+    const f=forecastFor(selectedCoin,h), m=metricFor(selectedCoin,h);
+    const el=document.createElement('div');
+    el.className='card'+(h===selectedHorizon?' active':'');
+    el.onclick=()=>setHorizon(h);
+    if(!f){
+      el.innerHTML=`<h3>${h} dagen</h3><div class="empty">Nog geen voorspelling beschikbaar.</div>`;
+    }else{
+      const retClass=f.predReturn>0?'up':f.predReturn<0?'down':'neutral';
+      const direction=f.probUp>=.5?'kans omhoog':'kans omlaag';
+      const directionP=f.probUp>=.5?f.probUp:1-f.probUp;
+      el.innerHTML=`
+        <h3>${h} ${h===1?'dag':'dagen'}</h3>
+        <div class="big ${retClass}">${pct(f.predReturn)}</div>
+        <div class="muted">verwacht rendement</div>
+        <div class="row"><span>${direction}</span><span class="value">${pct(directionP)}</span></div>
+        <div class="row"><span>verwachte koers</span><span class="value">${euro(f.expectedPrice)}</span></div>
+        <div class="row"><span>80%-band</span><span class="value">${euro(f.low80Price)} – ${euro(f.high80Price)}</span></div>
+        <div class="row"><span>confidence</span><span class="value">${pct(f.confidenceScore)}</span></div>
+        <div class="row"><span>OOS AUC</span><span class="value">${num(m.auc)}</span></div>`;
+    }
+    grid.appendChild(el);
+  }
+}
+
+async function loadHistory(){
+  const err=document.getElementById('historyError');
+  err.textContent='';
+  document.getElementById('chartTitle').textContent=`${selectedCoin} · ${selectedHorizon}d voorspelling versus werkelijkheid`;
+  try{
+    const r=await fetch(`/api/v1/history?coin=${selectedCoin}&horizon=${selectedHorizon}`,{cache:'no-store'});
+    if(!r.ok) throw new Error('Historie nog niet beschikbaar voor deze horizon.');
+    const j=await r.json();
+    historyPoints=(j.points||[]).filter(p=>p.actualReturn!==null);
+    renderHistory();
+  }catch(e){
+    historyPoints=[];
+    clearCanvas();
+    renderStats();
+    err.textContent=e.message||String(e);
+  }
+}
+
+function clearCanvas(){
+  const c=document.getElementById('historyChart'),ctx=c.getContext('2d');
+  const rect=c.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  c.width=Math.max(1,Math.floor(rect.width*dpr));c.height=Math.max(1,Math.floor(rect.height*dpr));
+  ctx.clearRect(0,0,c.width,c.height);
+}
+
+function renderHistory(){
+  const usePrice=historyPoints.some(p=>Number.isFinite(Number(p.predictedPrice))&&Number.isFinite(Number(p.actualPrice)));
+  document.getElementById('chartSub').textContent=usePrice
+    ? 'Historische out-of-sample koersvoorspelling tegenover gerealiseerde koers'
+    : 'Historische out-of-sample voorspelde rendementen tegenover gerealiseerde rendementen';
+
+  const pts=historyPoints.slice(-180);
+  const c=document.getElementById('historyChart'),ctx=c.getContext('2d');
+  const rect=c.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  c.width=Math.max(1,Math.floor(rect.width*dpr));c.height=Math.max(1,Math.floor(rect.height*dpr));
+  ctx.scale(dpr,dpr);
+  const W=rect.width,H=rect.height,pad={l:64,r:20,t:18,b:38};
+  ctx.clearRect(0,0,W,H);
+  if(pts.length<2){ctx.fillStyle='#9dabc8';ctx.font='14px Segoe UI';ctx.fillText('Nog te weinig historische punten.',20,40);renderStats();return;}
+
+  const a=pts.map(p=>usePrice?Number(p.predictedPrice):Number(p.predReturn)*100);
+  const b=pts.map(p=>usePrice?Number(p.actualPrice):Number(p.actualReturn)*100);
+  const vals=[...a,...b].filter(Number.isFinite);
+  let ymin=Math.min(...vals),ymax=Math.max(...vals);
+  if(ymin===ymax){ymin-=1;ymax+=1}
+  const margin=(ymax-ymin)*.08;ymin-=margin;ymax+=margin;
+  const x=i=>pad.l+(i/(pts.length-1))*(W-pad.l-pad.r);
+  const y=v=>pad.t+(ymax-v)/(ymax-ymin)*(H-pad.t-pad.b);
+
+  ctx.strokeStyle='#2a3654';ctx.lineWidth=1;ctx.fillStyle='#9dabc8';ctx.font='11px Segoe UI';
+  for(let i=0;i<=4;i++){
+    const v=ymin+(ymax-ymin)*i/4,yy=y(v);
+    ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(W-pad.r,yy);ctx.stroke();
+    const label=usePrice?'$'+Math.round(v).toLocaleString('nl-NL'):v.toFixed(1)+'%';
+    ctx.fillText(label,5,yy+4);
+  }
+  const dates=[0,Math.floor((pts.length-1)/2),pts.length-1];
+  for(const i of dates){ctx.fillText(fmtDate(pts[i].targetDate||pts[i].date),Math.max(pad.l-5,Math.min(W-85,x(i)-28)),H-12)}
+
+  function line(values,color){
+    ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();let started=false;
+    values.forEach((v,i)=>{if(!Number.isFinite(v))return;const xx=x(i),yy=y(v);if(!started){ctx.moveTo(xx,yy);started=true}else ctx.lineTo(xx,yy)});
+    ctx.stroke();
+  }
+  line(a,'#64b5ff');line(b,'#4ed1a1');
+  renderStats();
+}
+
+function renderStats(){
+  const box=document.getElementById('historyStats');
+  const pts=historyPoints.filter(p=>Number.isFinite(Number(p.predReturn))&&Number.isFinite(Number(p.actualReturn)));
+  if(!pts.length){box.innerHTML='';return}
+  const hit=pts.filter(p=>(Number(p.predReturn)>=0)===(Number(p.actualReturn)>=0)).length/pts.length;
+  const mae=pts.reduce((s,p)=>s+Math.abs(Number(p.predReturn)-Number(p.actualReturn)),0)/pts.length;
+  const bias=pts.reduce((s,p)=>s+(Number(p.predReturn)-Number(p.actualReturn)),0)/pts.length;
+  const m=metricFor(selectedCoin,selectedHorizon);
+  box.innerHTML=`
+    <div class="stat"><div class="l">Historische OOS-punten</div><div class="n">${pts.length}</div></div>
+    <div class="stat"><div class="l">Richting correct</div><div class="n">${pct(hit)}</div></div>
+    <div class="stat"><div class="l">Gem. absolute rendementsfout</div><div class="n">${pct(mae)}</div></div>
+    <div class="stat"><div class="l">Brier-score</div><div class="n">${num(m.brier,4)}</div></div>`;
+}
+
+function renderEvents(){
+  const box=document.getElementById('events'),items=(dashboard?.events||[]).filter(e=>!e.coin||e.coin===selectedCoin).slice(0,8);
+  if(!items.length){box.innerHTML='<div class="empty">Geen recente eventinformatie beschikbaar.</div>';return}
+  box.innerHTML=items.map(e=>`<div class="event"><span>${fmtDate(e.date)}</span><span>${e.topic||'event'} · ${e.sentiment||''}</span><span class="value">z=${num(e.eventZ90,2)}</span></div>`).join('');
+}
+
+async function loadAll(){
+  document.getElementById('statusText').textContent='Gegevens laden…';
+  try{
+    const r=await fetch('/api/v1/dashboard',{cache:'no-store'});
+    if(!r.ok) throw new Error('Dashboard-API niet bereikbaar');
+    dashboard=await r.json();
+    document.getElementById('statusText').textContent=dashboard.source==='live'?'Modeldata beschikbaar':'Wachten op modeldata';
+    document.getElementById('updated').textContent='Modeldatum: '+fmtDate(dashboard.updatedAt);
+    renderForecasts();renderEvents();await loadHistory();
+  }catch(e){
+    document.getElementById('statusText').textContent='Fout bij laden';
+    document.getElementById('forecastGrid').innerHTML='<div class="error">'+String(e)+'</div>';
+  }
+}
+window.addEventListener('resize',()=>{if(historyPoints.length)renderHistory()});
+loadAll();
+</script>
+</body>
+</html>
