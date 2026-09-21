@@ -17,7 +17,7 @@ echo Handmatige CryptoForecaster modelrun wordt gestart.
 echo De laptop blijft tijdens deze berekening wakker. Sluit dit venster niet.
 echo.
 
-".venv\\Scripts\\python.exe" keep_awake_run.py --workdir "%DATA_DIR%\\ultimate_run"
+".venv\Scripts\python.exe" keep_awake_run.py --workdir "%DATA_DIR%\ultimate_run"
 if errorlevel 1 (
   echo.
   echo MODEL RUN MISLUKT. Stuur een screenshot van de regels hierboven.
