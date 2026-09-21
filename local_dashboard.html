@@ -35,6 +35,16 @@ canvas{width:100%;height:100%;display:block}
 .events{display:grid;gap:8px}.event{display:grid;grid-template-columns:90px 1fr 110px;gap:12px;border-top:1px solid var(--line);padding:10px 0;font-size:13px}
 .empty{color:var(--muted);padding:24px 4px}.error{color:var(--bad);padding:12px 0}
 .legend{display:flex;gap:16px;font-size:12px;color:var(--muted);align-items:center}.sw{display:inline-block;width:18px;height:3px;margin-right:5px;vertical-align:middle}
+.signal-wrap{display:grid;grid-template-columns:1.1fr 2fr;gap:14px;align-items:stretch}
+.signal-main{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:18px}
+.signal-label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.signal-name{font-size:38px;font-weight:800;letter-spacing:-.8px;margin:6px 0}
+.signal-name.buy{color:var(--good)}.signal-name.sell{color:var(--bad)}.signal-name.hold{color:var(--warn)}
+.signal-score{font-size:13px;color:var(--muted)}
+.signal-details{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.signal-note{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;color:var(--muted);font-size:12px;line-height:1.45}
+.reason-list{margin:10px 0 0;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.6}
+@media(max-width:950px){.signal-wrap{grid-template-columns:1fr}.signal-details{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:950px){.grid{grid-template-columns:repeat(2,1fr)}.stats{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:620px){header{display:block}.status{text-align:left;margin-top:12px}.grid{grid-template-columns:1fr}.stats{grid-template-columns:1fr 1fr}.refresh{margin-left:0}.chart-wrap{height:290px}.event{grid-template-columns:80px 1fr}}
 </style>
@@ -53,6 +63,18 @@ canvas{width:100%;height:100%;display:block}
 </div>
 
 <div id="forecastGrid" class="grid"></div>
+
+<div class="section">
+  <div class="section-head">
+    <div>
+      <h2>Handelsstrategie</h2>
+      <div class="sub">Koop/verkooplaag op basis van de 1/7/30/90-daagse out-of-sample voorspellingen</div>
+    </div>
+    <span class="sub">Doelbenchmark: +100% per jaar</span>
+  </div>
+  <div id="strategyBox" class="empty">Strategie wordt berekend…</div>
+  <div id="strategyError" class="error"></div>
+</div>
 
 <div class="section">
   <div class="section-head">
@@ -79,7 +101,7 @@ canvas{width:100%;height:100%;display:block}
 </div>
 
 <script>
-let dashboard=null, selectedCoin='BTC', selectedHorizon=7, historyPoints=[];
+let dashboard=null, strategy=null, selectedCoin='BTC', selectedHorizon=7, historyPoints=[];
 
 const euro=v=>{
   if(v===null||v===undefined||!Number.isFinite(Number(v))) return '—';
@@ -101,6 +123,8 @@ function setCoin(c){
   document.getElementById('btcBtn').classList.toggle('active',c==='BTC');
   document.getElementById('ethBtn').classList.toggle('active',c==='ETH');
   renderForecasts();
+  renderEvents();
+  loadStrategy();
   loadHistory();
 }
 function setHorizon(h){
@@ -136,6 +160,74 @@ function renderForecasts(){
     }
     grid.appendChild(el);
   }
+}
+
+
+function strategyClass(s){
+  if(s==='KOPEN') return 'buy';
+  if(s==='VERKOPEN'||s==='AFBOUWEN') return 'sell';
+  return 'hold';
+}
+
+async function loadStrategy(){
+  const box=document.getElementById('strategyBox'),err=document.getElementById('strategyError');
+  err.textContent='';
+  box.className='empty';
+  box.textContent='Strategie wordt berekend…';
+  try{
+    const r=await fetch(`/api/v1/strategy?coin=${selectedCoin}`,{cache:'no-store'});
+    if(!r.ok){
+      let msg='Strategie niet beschikbaar.';
+      try{const j=await r.json(); if(j.detail) msg=j.detail;}catch(_){}
+      throw new Error(msg);
+    }
+    strategy=await r.json();
+    renderStrategy();
+  }catch(e){
+    strategy=null;
+    box.className='empty';
+    box.textContent='';
+    err.textContent=e.message||String(e);
+  }
+}
+
+function renderStrategy(){
+  if(!strategy) return;
+  const box=document.getElementById('strategyBox');
+  box.className='';
+  const recent=strategy.last12Months||{},full=strategy.backtest||{};
+  const cls=strategyClass(strategy.signal);
+  const gap=strategy.last12MonthsTargetGap;
+  const targetText=gap===null||gap===undefined?'—':(gap>=0?'doel gehaald in laatste 12 mnd':'onder doel in laatste 12 mnd');
+  const score=strategy.signalScore===null||strategy.signalScore===undefined?'—':Number(strategy.signalScore).toFixed(0);
+  const reasons=(strategy.reasons||[]).map(x=>`<li>${x}</li>`).join('');
+  box.innerHTML=`
+    <div class="signal-wrap">
+      <div class="signal-main">
+        <div class="signal-label">${selectedCoin} modelsignaal</div>
+        <div class="signal-name ${cls}">${strategy.signal}</div>
+        <div class="signal-score">Signaalscore: ${score}/100 · modelconfidence: ${pct(strategy.confidence)}</div>
+        <div class="row"><span>Doelpositie</span><span class="value">${pct(strategy.targetAllocation)}</span></div>
+        <div class="row"><span>Vorige modelpositie</span><span class="value">${pct(strategy.previousAllocation)}</span></div>
+        <ul class="reason-list">${reasons}</ul>
+      </div>
+      <div>
+        <div class="signal-details">
+          <div class="stat"><div class="l">Strategie laatste 12 mnd</div><div class="n">${pct(recent.totalReturn)}</div></div>
+          <div class="stat"><div class="l">Buy & hold laatste 12 mnd</div><div class="n">${pct(recent.buyHoldTotalReturn)}</div></div>
+          <div class="stat"><div class="l">100%-doel</div><div class="n">${pct(strategy.annualTarget)}</div></div>
+          <div class="stat"><div class="l">Max. drawdown 12 mnd</div><div class="n">${pct(recent.maxDrawdown)}</div></div>
+          <div class="stat"><div class="l">Volledige OOS CAGR</div><div class="n">${pct(full.cagr)}</div></div>
+          <div class="stat"><div class="l">Aantal transactiemomenten OOS</div><div class="n">${full.trades??'—'}</div></div>
+        </div>
+        <div class="signal-note">
+          <b>${targetText}.</b> +100% per jaar is een doelbenchmark, geen rendementsbelofte.
+          Het signaal is long-only, gebruikt hysterese om overtrading te beperken en past een
+          historische voorspelling pas toe op de daaropvolgende handelsdag. Transactiekosten
+          van 0,1% per positiewijziging zijn in de backtest opgenomen.
+        </div>
+      </div>
+    </div>`;
 }
 
 async function loadHistory(){
@@ -235,7 +327,7 @@ async function loadAll(){
     dashboard=await r.json();
     document.getElementById('statusText').textContent=dashboard.source==='live'?'Modeldata beschikbaar':'Wachten op modeldata';
     document.getElementById('updated').textContent='Modeldatum: '+fmtDate(dashboard.updatedAt);
-    renderForecasts();renderEvents();await loadHistory();
+    renderForecasts();renderEvents();await loadStrategy();await loadHistory();
   }catch(e){
     document.getElementById('statusText').textContent='Fout bij laden';
     document.getElementById('forecastGrid').innerHTML='<div class="error">'+String(e)+'</div>';
