@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import trading_strategy
+import strategy_audit
 from fastapi import FastAPI, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -375,6 +376,16 @@ def strategy(
         )
     except Exception as e:
         raise HTTPException(500,f"Strategieberekening mislukt: {e}")
+
+@app.get("/api/v1/strategy-audit")
+def strategy_audit_endpoint(
+    coin:str=Query(pattern="^(BTC|ETH)$"),
+):
+    prices=load_price_history(allow_download=False)
+    try:
+        return strategy_audit.build_audit(OUTPUT_DIR,prices,coin)
+    except Exception as e:
+        raise HTTPException(500,f"Strategie-audit mislukt: {e}")
 
 @app.get("/api/v1/history")
 def history(
