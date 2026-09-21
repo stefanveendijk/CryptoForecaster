@@ -361,8 +361,6 @@ def strategy(
     coin:str=Query(pattern="^(BTC|ETH)$"),
 ):
     prices=load_price_history()
-    if prices.empty:
-        raise HTTPException(503,"Koershistorie is nog niet beschikbaar.")
     try:
         return trading_strategy.build_strategy(OUTPUT_DIR,prices,coin)
     except Exception as e:
