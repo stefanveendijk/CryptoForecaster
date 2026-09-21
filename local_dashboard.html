@@ -64,6 +64,9 @@ canvas{width:100%;height:100%;display:block}
 .kraken-price{font-size:25px;font-weight:750;margin:5px 0 9px}
 .price-guard{margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:11px 12px;background:#0e1729;font-size:13px;line-height:1.5}
 .price-guard.good{border-color:#2c6b5a}.price-guard.warn{border-color:#6b5a2c}.price-guard .guard-title{font-weight:700;margin-bottom:4px}
+.entry-status{margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--panel2)}
+.entry-status.good{border-color:#2c6b5a}.entry-status.warn{border-color:#6b5a2c}.entry-status.bad{border-color:#7a3540}
+.entry-status .entry-title{font-size:17px;font-weight:750;margin-bottom:4px}
 @media(max-width:620px){.kraken-grid{grid-template-columns:1fr}}
 @media(max-width:950px){.portfolio-grid{grid-template-columns:1fr}}
 @media(max-width:950px){.signal-wrap{grid-template-columns:1fr}.signal-details{grid-template-columns:repeat(2,1fr)}}
@@ -120,6 +123,7 @@ canvas{width:100%;height:100%;display:block}
     </div>
   </div>
   <div id="strategyBox" class="empty">Strategie wordt berekend…</div>
+  <div id="entryStatus"></div>
   <div id="priceGuard"></div>
   <div id="strategyError" class="error"></div>
 </div>
@@ -235,6 +239,7 @@ async function loadKraken(){
     kraken=await r.json();
     renderKraken();
     renderPriceGuard();
+    renderEntryStatus();
   }catch(e){
     err.textContent=e.message||String(e);
   }
@@ -264,6 +269,50 @@ function signalAnchorKey(coin){return 'cf_buy_anchor_'+coin;}
 function readSignalAnchor(coin){try{return JSON.parse(localStorage.getItem(signalAnchorKey(coin))||'null');}catch(_){return null}}
 function writeSignalAnchor(coin,obj){localStorage.setItem(signalAnchorKey(coin),JSON.stringify(obj));}
 function clearSignalAnchor(coin){localStorage.removeItem(signalAnchorKey(coin));}
+function renderEntryStatus(){
+  const box=document.getElementById('entryStatus');
+  if(!box)return;
+  box.innerHTML=''; box.className='';
+  if(!strategy)return;
+  const signal=String(strategy.signal||'');
+  let title=''; let text=''; let cls='warn';
+  if(signal==='WACHTEN'){
+    title='Wachten op bevestiging';
+    text='Het model vindt de voorwaarden voor een nieuwe instap nog niet sterk genoeg.';
+  }else if(signal==='KOPEN'){
+    let tooLate=false;
+    if(kraken){
+      const ask=Number((kraken[selectedCoin]||{}).ask), anchor=readSignalAnchor(selectedCoin);
+      if(Number.isFinite(ask)&&anchor&&Number.isFinite(Number(anchor.price))){tooLate=ask>Number(anchor.price)*1.02;}
+    }
+    if(tooLate){
+      title='Prijs is sinds het signaal te ver opgelopen';
+      text='Het oorspronkelijke koopsignaal bestaat nog, maar de actuele Kraken-prijs ligt meer dan 2% boven de prijs waarop het signaal ontstond. Eerst opnieuw beoordelen.';
+      cls='warn';
+    }else{
+      title='Instapcondities aanwezig volgens het model';
+      text='Het model geeft een koopsignaal en de actuele prijs ligt nog binnen de ingestelde marge. Dit blijft een modelsignaal, geen garantie op stijging.';
+      cls='good';
+    }
+  }else if(signal==='AANHOUDEN'){
+    title='Bestaande positie aanhouden volgens het model';
+    text='Het model ziet op dit moment geen reden om de bestaande positie te vergroten of te verkleinen.';
+    cls='good';
+  }else if(signal==='AFBOUWEN'){
+    title='Model wil minder risico nemen';
+    text='Het model stelt voor de bestaande positie kleiner te maken.';
+    cls='warn';
+  }else if(signal==='VERKOPEN'){
+    title='Model wil de positie sluiten';
+    text='De signalen zijn volgens de huidige regels zwak genoeg om uit de positie te gaan.';
+    cls='bad';
+  }else{
+    title='Nog geen bruikbaar signaal';
+    text='De beschikbare voorspellingen geven nog geen duidelijke richting.';
+  }
+  box.className='entry-status '+cls;
+  box.innerHTML='<div class="entry-title">'+title+'</div><div class="sub">'+text+'</div>';
+}
 function renderPriceGuard(){
  const box=document.getElementById('priceGuard'); if(!box)return; box.innerHTML=''; box.className='';
  if(!strategy||!kraken)return; const coin=selectedCoin,q=kraken[coin]||{},ask=Number(q.ask); if(!Number.isFinite(ask))return;
@@ -349,6 +398,7 @@ async function loadStrategy(){
     strategy=await r.json();
     renderStrategy();
     renderPriceGuard();
+    renderEntryStatus();
   }catch(e){
     strategy=null;
     box.className='empty';
