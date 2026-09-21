@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
@@ -28,7 +29,7 @@ MODEL_NEWS = os.getenv("MODEL_NEWS", "true").lower() not in {"0","false","no"}
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 AUTO_RUN = os.getenv("AUTO_RUN_MODEL", "true").lower() not in {"0","false","no"}
 
-app = FastAPI(title="Crypto Forecaster Cloud API", version="4.1-cloud")
+app = FastAPI(title="Crypto Forecaster API", version="4.2-local")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -90,7 +91,7 @@ def demo_payload():
         "forecasts": [],
         "metrics": [],
         "events": [],
-        "message": "Het cloudmodel heeft nog geen eerste volledige run afgerond."
+        "message": "Het model heeft nog geen eerste volledige run afgerond."
     }
 
 def run_model(reason: str = "scheduled"):
@@ -210,10 +211,13 @@ def startup():
 
     threading.Thread(target=scheduler_loop,daemon=True).start()
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
 def root():
+    page=APP_DIR/"local_dashboard.html"
+    if page.exists():
+        return FileResponse(page,media_type="text/html")
     return {
-        "name":"Crypto Forecaster Cloud",
+        "name":"Crypto Forecaster",
         "ok":True,
         "health":"/api/v1/health",
         "dashboard":"/api/v1/dashboard",
@@ -322,6 +326,34 @@ def dashboard():
         "events":events,
     }
 
+def load_price_history() -> pd.DataFrame:
+    p=OUTPUT_DIR/"price_history.csv"
+    try:
+        if p.exists():
+            d=pd.read_csv(p,parse_dates=["date"]).set_index("date").sort_index()
+            d.index=pd.to_datetime(d.index).tz_localize(None).normalize()
+            return d
+    except Exception:
+        pass
+
+    # Backfill voor een bestaande lokale installatie die al een volledige modelrun
+    # heeft gedaan voordat price_history.csv werd toegevoegd. Dit gebeurt maximaal
+    # één keer; daarna wordt het lokaal opgeslagen.
+    try:
+        from config import DEFAULT_CONFIG
+        import providers
+        d=providers.fetch_yfinance_crypto(DEFAULT_CONFIG)
+        keep=[x for x in ["BTC_close","ETH_close"] if x in d.columns]
+        if keep:
+            d=d[keep].copy()
+            d.index.name="date"
+            OUTPUT_DIR.mkdir(parents=True,exist_ok=True)
+            d.to_csv(p)
+            return d
+    except Exception:
+        pass
+    return pd.DataFrame()
+
 @app.get("/api/v1/history")
 def history(
     coin:str=Query(pattern="^(BTC|ETH)$"),
@@ -334,12 +366,40 @@ def history(
     if "date" not in d.columns:
         d=d.rename(columns={d.columns[0]:"date"})
     d=d.tail(500)
+    prices=load_price_history()
+    price_col=f"{coin}_close"
     points=[]
     for _,r in d.iterrows():
+        date_raw=r.get("date")
+        try:
+            dt=pd.Timestamp(date_raw).tz_localize(None).normalize()
+        except Exception:
+            dt=None
+        pred_ret=clean_number(r.get("pred_ret"))
+        actual_ret=clean_number(r.get("actual_ret"))
+        low_ret=clean_number(r.get("low80"))
+        high_ret=clean_number(r.get("high80"))
+        start_price=None
+        if dt is not None and price_col in prices.columns and dt in prices.index:
+            start_price=clean_number(prices.at[dt,price_col])
+        predicted_price=(start_price*(1+pred_ret)
+                         if start_price is not None and pred_ret is not None else None)
+        actual_price=(start_price*(1+actual_ret)
+                      if start_price is not None and actual_ret is not None else None)
+        low_price=(start_price*(1+low_ret)
+                   if start_price is not None and low_ret is not None else None)
+        high_price=(start_price*(1+high_ret)
+                    if start_price is not None and high_ret is not None else None)
         points.append({
-            "date":str(r.get("date")),
+            "date":str(date_raw),
+            "targetDate":str((dt+pd.Timedelta(days=horizon)).date()) if dt is not None else None,
             "probUp":clean_number(r.get("prob_up")) or 0,
-            "predReturn":clean_number(r.get("pred_ret")) or 0,
-            "actualReturn":clean_number(r.get("actual_ret")),
+            "predReturn":pred_ret or 0,
+            "actualReturn":actual_ret,
+            "startPrice":start_price,
+            "predictedPrice":predicted_price,
+            "actualPrice":actual_price,
+            "low80Price":low_price,
+            "high80Price":high_price,
         })
     return {"coin":coin,"horizon":horizon,"points":points}
