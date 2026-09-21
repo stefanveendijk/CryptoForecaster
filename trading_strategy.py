@@ -147,8 +147,6 @@ def _metrics(frame: pd.DataFrame) -> dict:
 
 def _backtest(output_dir: Path, prices: pd.DataFrame, coin: str) -> tuple[pd.DataFrame, dict]:
     price_col = f"{coin}_close"
-    if price_col not in prices.columns:
-        return pd.DataFrame(), {}
 
     horizon_frames = {}
     all_dates = set()
@@ -182,13 +180,27 @@ def _backtest(output_dir: Path, prices: pd.DataFrame, coin: str) -> tuple[pd.Dat
         return pd.DataFrame(), {}
 
     scores = pd.Series(dict(score_rows), name="score").sort_index()
-    price = pd.to_numeric(prices[price_col], errors="coerce").dropna().sort_index()
-    idx = price.index.intersection(scores.index)
+
+    # Dag t -> t+1 rendement voor de handelsbacktest. Geef echte dagelijkse
+    # koershistorie voorrang; val anders terug op de al opgeslagen 1d OOS
+    # actual_ret, zodat de strategie niet afhankelijk is van een nieuwe download.
+    next_ret = pd.Series(dtype=float)
+    if price_col in prices.columns:
+        price = pd.to_numeric(prices[price_col], errors="coerce").dropna().sort_index()
+        if not price.empty:
+            daily_price = price.reindex(pd.date_range(price.index.min(), price.index.max(), freq="D")).ffill()
+            next_ret = daily_price.pct_change().shift(-1)
+
+    if next_ret.empty:
+        one_day = horizon_frames.get(1, pd.DataFrame())
+        if not one_day.empty and "actual_ret" in one_day.columns:
+            next_ret = pd.to_numeric(one_day["actual_ret"], errors="coerce").dropna().sort_index()
+
+    idx = scores.index.intersection(next_ret.index)
     if len(idx) < 30:
         return pd.DataFrame(), {}
 
     frame = pd.DataFrame(index=idx)
-    frame["price"] = price.reindex(idx)
     frame["score"] = scores.reindex(idx)
 
     pos = []
@@ -199,8 +211,6 @@ def _backtest(output_dir: Path, prices: pd.DataFrame, coin: str) -> tuple[pd.Dat
     frame["position"] = pos
 
     # Signaal na dagclose t wordt toegepast op t -> t+1.
-    daily_price = price.reindex(pd.date_range(price.index.min(), price.index.max(), freq="D")).ffill()
-    next_ret = daily_price.pct_change().shift(-1)
     frame["buyhold_return"] = next_ret.reindex(frame.index)
     turnover = frame["position"].diff().abs().fillna(frame["position"])
     frame["strategy_return"] = frame["position"] * frame["buyhold_return"] - turnover * TRANSACTION_COST
