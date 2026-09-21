@@ -28,6 +28,12 @@ if not exist "strategy_audit.py" (
   exit /b 1
 )
 
+if not exist "portfolio_strategy.py" (
+  echo FOUT: portfolio_strategy.py ontbreekt. Werk de app eerst bij.
+  pause
+  exit /b 1
+)
+
 findstr /C:"Strategie-audit" "local_dashboard.html" >nul 2>nul
 if errorlevel 1 (
   echo FOUT: local_dashboard.html is nog een oude versie zonder Strategie-audit.
