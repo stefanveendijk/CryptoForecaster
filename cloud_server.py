@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import requests
 import trading_strategy
 import strategy_audit
 import portfolio_strategy
@@ -44,6 +45,8 @@ app.add_middleware(
 
 model_lock = threading.Lock()
 run_thread: threading.Thread | None = None
+kraken_cache: dict[str, Any] = {"ts": 0.0, "data": None}
+KRAKEN_CACHE_SECONDS = 30.0
 
 def utcnow():
     return datetime.now(timezone.utc)
@@ -261,6 +264,70 @@ def run_now(x_admin_key: str | None = Header(default=None)):
         raise HTTPException(403,"Onjuiste admin key.")
     started=start_model_thread("manual")
     return {"ok":True,"started":started,"state":load_state()}
+
+def _kraken_pair_quote(symbol: str) -> dict:
+    r = requests.get(
+        "https://api.kraken.com/0/public/PreTrade",
+        params={"symbol": symbol},
+        headers={"Accept": "application/json", "User-Agent": "CryptoForecaster/4.2-local"},
+        timeout=8,
+    )
+    r.raise_for_status()
+    payload = r.json()
+    if payload.get("error"):
+        raise RuntimeError("; ".join(str(x) for x in payload["error"]))
+
+    result = payload.get("result") or {}
+    bids = result.get("bids") or []
+    asks = result.get("asks") or []
+    if not bids or not asks:
+        raise RuntimeError(f"Geen bied/laatprijs ontvangen voor {symbol}")
+
+    bid = clean_number(bids[0].get("price"))
+    ask = clean_number(asks[0].get("price"))
+    if bid is None or ask is None:
+        raise RuntimeError(f"Ongeldige Kraken-prijs voor {symbol}")
+
+    mid = (bid + ask) / 2.0
+    spread = ask - bid
+    spread_pct = spread / mid if mid else None
+    return {
+        "symbol": symbol,
+        "bid": bid,
+        "ask": ask,
+        "mid": mid,
+        "spread": spread,
+        "spreadPct": spread_pct,
+    }
+
+
+@app.get("/api/v1/kraken")
+def kraken_prices():
+    now = time.time()
+    cached = kraken_cache.get("data")
+    cached_ts = float(kraken_cache.get("ts") or 0.0)
+    if cached is not None and now - cached_ts < KRAKEN_CACHE_SECONDS:
+        return cached
+
+    try:
+        data = {
+            "source": "Kraken",
+            "currency": "EUR",
+            "updatedAt": utcnow().isoformat(),
+            "BTC": _kraken_pair_quote("BTC/EUR"),
+            "ETH": _kraken_pair_quote("ETH/EUR"),
+        }
+        kraken_cache["ts"] = now
+        kraken_cache["data"] = data
+        return data
+    except Exception as e:
+        if cached is not None:
+            stale = dict(cached)
+            stale["stale"] = True
+            stale["warning"] = f"Actuele Kraken-prijs tijdelijk niet bereikbaar: {e}"
+            return stale
+        raise HTTPException(503, f"Kraken-prijzen tijdelijk niet beschikbaar: {e}")
+
 
 @app.get("/api/v1/dashboard")
 def dashboard():
