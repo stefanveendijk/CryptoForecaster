@@ -364,10 +364,15 @@ def load_price_history(allow_download: bool = True) -> pd.DataFrame:
 @app.get("/api/v1/strategy")
 def strategy(
     coin:str=Query(pattern="^(BTC|ETH)$"),
+    current_position:float=Query(default=0.0),
 ):
+    if current_position not in {0.0,0.5,1.0}:
+        raise HTTPException(400,"current_position moet 0, 0.5 of 1 zijn.")
     prices=load_price_history(allow_download=False)
     try:
-        return trading_strategy.build_strategy(OUTPUT_DIR,prices,coin)
+        return trading_strategy.build_strategy(
+            OUTPUT_DIR,prices,coin,current_position=current_position
+        )
     except Exception as e:
         raise HTTPException(500,f"Strategieberekening mislukt: {e}")
 
