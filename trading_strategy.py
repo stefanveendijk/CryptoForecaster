@@ -254,7 +254,7 @@ def _load_latest(output_dir: Path, coin: str) -> Dict[int, Dict[str, float]]:
     return out
 
 
-def build_strategy(output_dir: Path, prices: pd.DataFrame, coin: str) -> dict:
+def build_strategy(output_dir: Path, prices: pd.DataFrame, coin: str, current_position: float | None = None) -> dict:
     coin = coin.upper()
     if coin not in {"BTC", "ETH"}:
         raise ValueError("coin moet BTC of ETH zijn")
@@ -263,13 +263,20 @@ def build_strategy(output_dir: Path, prices: pd.DataFrame, coin: str) -> dict:
     latest = _load_latest(output_dir, coin)
     score = _score_from_values(latest)
 
-    previous = float(frame["position"].iloc[-1]) if not frame.empty else 0.0
+    model_previous = float(frame["position"].iloc[-1]) if not frame.empty else 0.0
+    if current_position is None:
+        current = model_previous
+    else:
+        current = float(current_position)
+        if current not in {0.0, 0.5, 1.0}:
+            raise ValueError("current_position moet 0, 0.5 of 1 zijn")
+
     if score is None:
-        target = previous
+        target = current
         signal = "GEEN SIGNAAL"
     else:
-        target = _target_position(score, previous)
-        signal = _signal_name(previous, target)
+        target = _target_position(score, current)
+        signal = _signal_name(current, target)
 
     recent = _recent_metrics(frame, 365)
 
@@ -312,11 +319,13 @@ def build_strategy(output_dir: Path, prices: pd.DataFrame, coin: str) -> dict:
         "coin": coin,
         "signal": signal,
         "targetAllocation": target,
-        "previousAllocation": previous,
+        "currentAllocation": current,
+        "modelPreviousAllocation": model_previous,
         "signalScore": score100,
         "confidence": confidence,
         "annualTarget": ANNUAL_TARGET,
         "targetIsGoalNotGuarantee": True,
+        "usesActualPosition": current_position is not None,
         "backtest": full,
         "last12Months": recent,
         "last12MonthsTargetGap": target_gap,
