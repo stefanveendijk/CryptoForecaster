@@ -99,6 +99,14 @@ def run(cfg:Config, workdir:Path, force=False):
     df,adv_info=advanced_features.enrich_market_structure(df,cache,force=force)
     print("  [ADV] market structure:",adv_info)
 
+    # Bewaar de dagelijkse BTC/ETH slotkoersen voor het lokale dashboard.
+    # Daarmee kan historische voorspelde koers direct naast de gerealiseerde koers worden getoond.
+    price_cols=[f"{coin}_close" for coin in cfg.coins if f"{coin}_close" in df.columns]
+    if price_cols:
+        price_history=df[price_cols].copy()
+        price_history.index.name="date"
+        price_history.to_csv(outdir/"price_history.csv")
+
     print("\n3/6 Nieuws + gebeurtenissen...")
     df,raw_news,raw_tone,events=add_news(df,cfg,cache,outdir,force=force)
 
