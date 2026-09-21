@@ -17,6 +17,21 @@ BUY_FULL_GRID = [0.16, 0.22, 0.28]
 TRIM_GRID = [-0.02, 0.02, 0.06]
 SELL_GRID = [-0.18, -0.12, -0.06]
 
+_AUDIT_CACHE: dict[str, tuple[tuple, dict[str, Any]]] = {}
+
+
+def _cache_key(output_dir: Path, coin: str) -> tuple:
+    paths = [output_dir / f"{coin}_{h}d_META_oos.csv" for h in ts.HORIZONS]
+    paths += [output_dir / "latest_forecasts.csv", output_dir / "price_history.csv"]
+    key = []
+    for p in paths:
+        try:
+            st = p.stat()
+            key.append((p.name, st.st_mtime_ns, st.st_size))
+        except OSError:
+            key.append((p.name, None, None))
+    return tuple(key)
+
 
 def _target(score: float, current: float, p: dict[str, float]) -> float:
     if current <= 0.0:
@@ -241,18 +256,25 @@ def build_audit(output_dir: Path, prices: pd.DataFrame, coin: str) -> dict[str, 
     if coin not in {"BTC", "ETH"}:
         raise ValueError("coin moet BTC of ETH zijn")
 
+    cache_key = _cache_key(output_dir, coin)
+    cached = _AUDIT_CACHE.get(coin)
+    if cached is not None and cached[0] == cache_key:
+        return cached[1]
+
     full_frame, _ = ts._backtest(output_dir, prices, coin)
     if full_frame.empty:
-        return {
+        result = {
             "coin": coin,
             "available": False,
             "reason": "Nog onvoldoende out-of-sample gegevens voor strategie-audit.",
         }
+        _AUDIT_CACHE[coin] = (cache_key, result)
+        return result
 
     base = full_frame[["score", "buyhold_return"]].dropna().copy()
     wf, folds = _walk_forward(base)
     if wf.empty or not folds:
-        return {
+        result = {
             "coin": coin,
             "available": False,
             "days": int(len(base)),
@@ -261,6 +283,8 @@ def build_audit(output_dir: Path, prices: pd.DataFrame, coin: str) -> dict[str, 
                 f"nu {len(base)}."
             ),
         }
+        _AUDIT_CACHE[coin] = (cache_key, result)
+        return result
 
     # Vergelijk de vaste strategie exact over dezelfde ongeziene testperiode.
     holdout_base = base.loc[wf.index.min():wf.index.max()]
@@ -289,7 +313,7 @@ def build_audit(output_dir: Path, prices: pd.DataFrame, coin: str) -> dict[str, 
         "majorityPositiveYears": bool(years) and positive_years > len(years) / 2,
     }
 
-    return {
+    result = {
         "coin": coin,
         "available": True,
         "method": {
@@ -317,3 +341,5 @@ def build_audit(output_dir: Path, prices: pd.DataFrame, coin: str) -> dict[str, 
         "costStressFixedStrategy": _cost_stress(holdout_base),
         "folds": folds,
     }
+    _AUDIT_CACHE[coin] = (cache_key, result)
+    return result
