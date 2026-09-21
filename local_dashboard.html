@@ -59,6 +59,10 @@ canvas{width:100%;height:100%;display:block}
 .alloc-bar{height:12px;border-radius:999px;background:#0c1425;border:1px solid var(--line);overflow:hidden}
 .alloc-fill{height:100%;background:linear-gradient(90deg,#64b5ff,#4ed1a1)}
 .badge{display:inline-block;border:1px solid var(--line);background:var(--panel2);border-radius:999px;padding:6px 9px;font-size:12px;color:var(--muted);margin-right:6px;margin-top:6px}
+.kraken-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.kraken-card{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:15px}
+.kraken-price{font-size:25px;font-weight:750;margin:5px 0 9px}
+@media(max-width:620px){.kraken-grid{grid-template-columns:1fr}}
 @media(max-width:950px){.portfolio-grid{grid-template-columns:1fr}}
 @media(max-width:950px){.signal-wrap{grid-template-columns:1fr}.signal-details{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:950px){.grid{grid-template-columns:repeat(2,1fr)}.stats{grid-template-columns:repeat(2,1fr)}}
@@ -76,6 +80,20 @@ canvas{width:100%;height:100%;display:block}
   <button id="btcBtn" class="active" onclick="setCoin('BTC')">Bitcoin</button>
   <button id="ethBtn" onclick="setCoin('ETH')">Ethereum</button>
   <button class="refresh" onclick="loadAll()">Vernieuwen</button>
+</div>
+
+<div class="section">
+  <div class="section-head">
+    <div>
+      <h2>Actuele Kraken-prijzen</h2>
+      <div class="sub">Werkelijke BTC/EUR- en ETH/EUR-prijzen waarop je bij Kraken kunt handelen</div>
+    </div>
+    <span class="sub" id="krakenUpdated">Wordt geladen…</span>
+  </div>
+  <div id="krakenBox" class="kraken-grid">
+    <div class="empty">Kraken-prijzen worden opgehaald…</div>
+  </div>
+  <div id="krakenError" class="error"></div>
 </div>
 
 <div id="forecastGrid" class="grid"></div>
@@ -162,13 +180,18 @@ canvas{width:100%;height:100%;display:block}
 </div>
 
 <script>
-let dashboard=null, strategy=null, audit=null, portfolio=null, selectedCoin='BTC', selectedHorizon=7, historyPoints=[];
+let dashboard=null, strategy=null, audit=null, portfolio=null, kraken=null, selectedCoin='BTC', selectedHorizon=7, historyPoints=[];
 let actualPositions={BTC:0,ETH:0};
 
 const euro=v=>{
   if(v===null||v===undefined||!Number.isFinite(Number(v))) return '—';
   const n=Number(v);
   return new Intl.NumberFormat('nl-NL',{style:'currency',currency:'USD',maximumFractionDigits:n>=1000?0:2}).format(n);
+};
+const eur=v=>{
+  if(v===null||v===undefined||!Number.isFinite(Number(v))) return '—';
+  const n=Number(v);
+  return new Intl.NumberFormat('nl-NL',{style:'currency',currency:'EUR',maximumFractionDigits:n>=1000?0:2}).format(n);
 };
 const pct=v=>v===null||v===undefined||!Number.isFinite(Number(v))?'—':(Number(v)*100).toFixed(1)+'%';
 const num=(v,d=3)=>v===null||v===undefined||!Number.isFinite(Number(v))?'—':Number(v).toFixed(d);
@@ -195,6 +218,43 @@ function setActualPosition(v){
   loadStrategy();
 }
 
+
+async function loadKraken(){
+  const box=document.getElementById('krakenBox'),err=document.getElementById('krakenError');
+  err.textContent='';
+  try{
+    const r=await fetch('/api/v1/kraken',{cache:'no-store'});
+    if(!r.ok){
+      let msg='Actuele Kraken-prijzen tijdelijk niet beschikbaar.';
+      try{const j=await r.json(); if(j.detail) msg=j.detail;}catch(_){}
+      throw new Error(msg);
+    }
+    kraken=await r.json();
+    renderKraken();
+  }catch(e){
+    err.textContent=e.message||String(e);
+  }
+}
+
+function renderKraken(){
+  if(!kraken) return;
+  const box=document.getElementById('krakenBox');
+  const updated=document.getElementById('krakenUpdated');
+  updated.textContent=(kraken.stale?'Laatste bekende prijs · ':'Bijgewerkt · ')+new Date(kraken.updatedAt).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  box.innerHTML=['BTC','ETH'].map(coin=>{
+    const q=kraken[coin]||{};
+    return `
+      <div class="kraken-card">
+        <div class="signal-label">${coin==='BTC'?'Bitcoin':'Ethereum'} · Kraken</div>
+        <div class="kraken-price">${eur(q.mid)}</div>
+        <div class="row"><span>Prijs om te kopen</span><span class="value">${eur(q.ask)}</span></div>
+        <div class="row"><span>Prijs bij verkopen</span><span class="value">${eur(q.bid)}</span></div>
+        <div class="row"><span>Verschil koop/verkoop</span><span class="value">${pct(q.spreadPct)}</span></div>
+      </div>`;
+  }).join('');
+  const err=document.getElementById('krakenError');
+  if(kraken.warning) err.textContent=kraken.warning;
+}
 
 function metricFor(coin,h){
   return (dashboard?.metrics||[]).find(x=>x.coin===coin&&Number(x.horizon)===Number(h))||{};
@@ -569,13 +629,14 @@ async function loadAll(){
     dashboard=await r.json();
     document.getElementById('statusText').textContent=dashboard.source==='live'?'Modeldata beschikbaar':'Wachten op modeldata';
     document.getElementById('updated').textContent='Modeldatum: '+fmtDate(dashboard.updatedAt);
-    renderForecasts();renderEvents();await loadStrategy();await loadAudit();await loadPortfolio();await loadHistory();
+    renderForecasts();renderEvents();loadKraken();await loadStrategy();await loadAudit();await loadPortfolio();await loadHistory();
   }catch(e){
     document.getElementById('statusText').textContent='Fout bij laden';
     document.getElementById('forecastGrid').innerHTML='<div class="error">'+String(e)+'</div>';
   }
 }
 window.addEventListener('resize',()=>{if(historyPoints.length)renderHistory()});
+setInterval(loadKraken,30000);
 loadSavedPositions();
 renderPositionButtons();
 loadAll();
