@@ -15,6 +15,12 @@ set LOCAL_MODE=true
 set MODEL_NEWS=true
 set MODEL_DEEP=false
 echo.
+echo Oude lokale server op poort 8080 wordt indien nodig afgesloten...
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8080" ^| findstr "LISTENING"') do (
+  taskkill /PID %%a /F >nul 2>nul
+)
+timeout /t 1 /nobreak >nul
+echo.
 echo CryptoForecaster start lokaal op http://127.0.0.1:8080
 echo Laat dit venster open zolang je de lokale app gebruikt.
 echo.
