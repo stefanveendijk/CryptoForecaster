@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import trading_strategy
 from fastapi import FastAPI, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -353,6 +354,19 @@ def load_price_history() -> pd.DataFrame:
     except Exception:
         pass
     return pd.DataFrame()
+
+
+@app.get("/api/v1/strategy")
+def strategy(
+    coin:str=Query(pattern="^(BTC|ETH)$"),
+):
+    prices=load_price_history()
+    if prices.empty:
+        raise HTTPException(503,"Koershistorie is nog niet beschikbaar.")
+    try:
+        return trading_strategy.build_strategy(OUTPUT_DIR,prices,coin)
+    except Exception as e:
+        raise HTTPException(500,f"Strategieberekening mislukt: {e}")
 
 @app.get("/api/v1/history")
 def history(
