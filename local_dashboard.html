@@ -44,6 +44,10 @@ canvas{width:100%;height:100%;display:block}
 .signal-details{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .signal-note{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;color:var(--muted);font-size:12px;line-height:1.45}
 .reason-list{margin:10px 0 0;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.6}
+.position-box{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:12px 0 14px}
+.position-choice{display:flex;gap:8px;flex-wrap:wrap}
+.position-choice button{padding:7px 12px}
+.position-choice button.active{background:#2b4770;border-color:#6a9bd2}
 @media(max-width:950px){.signal-wrap{grid-template-columns:1fr}.signal-details{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:950px){.grid{grid-template-columns:repeat(2,1fr)}.stats{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:620px){header{display:block}.status{text-align:left;margin-top:12px}.grid{grid-template-columns:1fr}.stats{grid-template-columns:1fr 1fr}.refresh{margin-left:0}.chart-wrap{height:290px}.event{grid-template-columns:80px 1fr}}
@@ -71,6 +75,17 @@ canvas{width:100%;height:100%;display:block}
       <div class="sub">Koop/verkooplaag op basis van de 1/7/30/90-daagse out-of-sample voorspellingen</div>
     </div>
     <span class="sub">Doelbenchmark: +100% per jaar</span>
+  </div>
+  <div class="position-box">
+    <div>
+      <div><b>Mijn huidige positie in <span id="positionCoin">BTC</span></b></div>
+      <div class="sub">Kies hoeveel van je beschikbare handelskapitaal nu in deze munt zit.</div>
+    </div>
+    <div class="position-choice">
+      <button id="pos0" onclick="setActualPosition(0)">0%</button>
+      <button id="pos50" onclick="setActualPosition(0.5)">50%</button>
+      <button id="pos100" onclick="setActualPosition(1)">100%</button>
+    </div>
   </div>
   <div id="strategyBox" class="empty">Strategie wordt berekend…</div>
   <div id="strategyError" class="error"></div>
@@ -102,6 +117,7 @@ canvas{width:100%;height:100%;display:block}
 
 <script>
 let dashboard=null, strategy=null, selectedCoin='BTC', selectedHorizon=7, historyPoints=[];
+let actualPositions={BTC:0,ETH:0};
 
 const euro=v=>{
   if(v===null||v===undefined||!Number.isFinite(Number(v))) return '—';
@@ -111,6 +127,28 @@ const euro=v=>{
 const pct=v=>v===null||v===undefined||!Number.isFinite(Number(v))?'—':(Number(v)*100).toFixed(1)+'%';
 const num=(v,d=3)=>v===null||v===undefined||!Number.isFinite(Number(v))?'—':Number(v).toFixed(d);
 const fmtDate=s=>{if(!s)return '—';const d=new Date(s);return isNaN(d)?String(s):d.toLocaleDateString('nl-NL');};
+
+function loadSavedPositions(){
+  for(const coin of ['BTC','ETH']){
+    const raw=localStorage.getItem('cf_actual_position_'+coin);
+    const v=Number(raw);
+    actualPositions[coin]=[0,0.5,1].includes(v)?v:0;
+  }
+}
+function renderPositionButtons(){
+  document.getElementById('positionCoin').textContent=selectedCoin;
+  const v=actualPositions[selectedCoin]??0;
+  document.getElementById('pos0').classList.toggle('active',v===0);
+  document.getElementById('pos50').classList.toggle('active',v===0.5);
+  document.getElementById('pos100').classList.toggle('active',v===1);
+}
+function setActualPosition(v){
+  actualPositions[selectedCoin]=v;
+  localStorage.setItem('cf_actual_position_'+selectedCoin,String(v));
+  renderPositionButtons();
+  loadStrategy();
+}
+
 
 function metricFor(coin,h){
   return (dashboard?.metrics||[]).find(x=>x.coin===coin&&Number(x.horizon)===Number(h))||{};
@@ -124,6 +162,7 @@ function setCoin(c){
   document.getElementById('ethBtn').classList.toggle('active',c==='ETH');
   renderForecasts();
   renderEvents();
+  renderPositionButtons();
   loadStrategy();
   loadHistory();
 }
@@ -175,7 +214,8 @@ async function loadStrategy(){
   box.className='empty';
   box.textContent='Strategie wordt berekend…';
   try{
-    const r=await fetch(`/api/v1/strategy?coin=${selectedCoin}`,{cache:'no-store'});
+    const current=actualPositions[selectedCoin]??0;
+    const r=await fetch(`/api/v1/strategy?coin=${selectedCoin}&current_position=${current}`,{cache:'no-store'});
     if(!r.ok){
       let msg='Strategie niet beschikbaar.';
       try{const j=await r.json(); if(j.detail) msg=j.detail;}catch(_){}
@@ -207,8 +247,8 @@ function renderStrategy(){
         <div class="signal-label">${selectedCoin} modelsignaal</div>
         <div class="signal-name ${cls}">${strategy.signal}</div>
         <div class="signal-score">Signaalscore: ${score}/100 · modelconfidence: ${pct(strategy.confidence)}</div>
-        <div class="row"><span>Doelpositie</span><span class="value">${pct(strategy.targetAllocation)}</span></div>
-        <div class="row"><span>Vorige modelpositie</span><span class="value">${pct(strategy.previousAllocation)}</span></div>
+        <div class="row"><span>Mijn huidige positie</span><span class="value">${pct(strategy.currentAllocation)}</span></div>
+        <div class="row"><span>Model-doelpositie</span><span class="value">${pct(strategy.targetAllocation)}</span></div>
         <ul class="reason-list">${reasons}</ul>
       </div>
       <div>
@@ -334,6 +374,8 @@ async function loadAll(){
   }
 }
 window.addEventListener('resize',()=>{if(historyPoints.length)renderHistory()});
+loadSavedPositions();
+renderPositionButtons();
 loadAll();
 </script>
 </body>
