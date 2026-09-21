@@ -41,7 +41,7 @@ def _read_meta(output_dir: Path, coin: str, horizon: int) -> pd.DataFrame:
     return d[keep]
 
 
-def _rolling_quality(d: pd.DataFrame) -> pd.Series:
+def _rolling_quality(d: pd.DataFrame, horizon: int) -> pd.Series:
     """
     Alleen verleden telt mee. Kwaliteit is gebaseerd op rolling Brier skill
     versus een 50/50-baseline (Brier 0.25). De huidige observatie wordt
@@ -59,7 +59,11 @@ def _rolling_quality(d: pd.DataFrame) -> pd.Series:
 
     prob = pd.to_numeric(d["prob_up"], errors="coerce")
     brier = (prob - actual) ** 2
-    hist = brier.shift(1).rolling(QUALITY_LOOKBACK, min_periods=QUALITY_MIN_PERIODS).mean()
+    # Een h-daagse uitkomst van voorspelling t is pas op t+h bekend.
+    # Bij dagelijkse OOS-rijen betekent dit minimaal h rijen vertraging.
+    hist = brier.shift(max(1, int(horizon))).rolling(
+        QUALITY_LOOKBACK, min_periods=QUALITY_MIN_PERIODS
+    ).mean()
 
     # 0.5 = neutraal; beter dan baseline loopt richting 1.0; slechter richting 0.25.
     skill = (0.25 - hist) / 0.25
@@ -100,7 +104,7 @@ def _coin_history(output_dir: Path, coin: str) -> pd.DataFrame:
         if d is None or d.empty:
             continue
 
-        q = _rolling_quality(d)
+        q = _rolling_quality(d, h)
         p = pd.to_numeric(d.get("prob_up"), errors="coerce")
         r = pd.to_numeric(d.get("pred_ret"), errors="coerce")
         comp = pd.Series(index=d.index, dtype=float)
