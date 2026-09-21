@@ -29,6 +29,7 @@ MODEL_DEEP = os.getenv("MODEL_DEEP", "false").lower() in {"1","true","yes"}
 MODEL_NEWS = os.getenv("MODEL_NEWS", "true").lower() not in {"0","false","no"}
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 AUTO_RUN = os.getenv("AUTO_RUN_MODEL", "true").lower() not in {"0","false","no"}
+LOCAL_MODE = os.getenv("LOCAL_MODE", "false").lower() in {"1","true","yes"}
 
 app = FastAPI(title="Crypto Forecaster API", version="4.2-local")
 app.add_middleware(
@@ -229,7 +230,8 @@ def health():
     state=load_state()
     return {
         "ok": True,
-        "cloud": True,
+        "cloud": not LOCAL_MODE,
+        "local": LOCAL_MODE,
         "modelOutputExists": (OUTPUT_DIR/"latest_forecasts.csv").exists(),
         "modelRunning": bool(state.get("running")),
         "lastSuccess": state.get("last_success"),
@@ -327,7 +329,7 @@ def dashboard():
         "events":events,
     }
 
-def load_price_history() -> pd.DataFrame:
+def load_price_history(allow_download: bool = True) -> pd.DataFrame:
     p=OUTPUT_DIR/"price_history.csv"
     try:
         if p.exists():
@@ -336,6 +338,9 @@ def load_price_history() -> pd.DataFrame:
             return d
     except Exception:
         pass
+
+    if not allow_download:
+        return pd.DataFrame()
 
     # Backfill voor een bestaande lokale installatie die al een volledige modelrun
     # heeft gedaan voordat price_history.csv werd toegevoegd. Dit gebeurt maximaal
@@ -360,7 +365,7 @@ def load_price_history() -> pd.DataFrame:
 def strategy(
     coin:str=Query(pattern="^(BTC|ETH)$"),
 ):
-    prices=load_price_history()
+    prices=load_price_history(allow_download=False)
     try:
         return trading_strategy.build_strategy(OUTPUT_DIR,prices,coin)
     except Exception as e:
