@@ -24,7 +24,7 @@ if errorlevel 1 goto :fail
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 goto :fail
 if not exist local_data mkdir local_data
-schtasks /Create /TN "CryptoForecaster Daily" /TR "\"%CD%\run_daily_local.bat\"" /SC DAILY /ST 05:30 /F
+schtasks /Create /TN "CryptoForecaster Daily" /TR "\"%CD%\run_daily_local.bat\"" /SC DAILY /ST 05:30 /F /RL LIMITED
 if errorlevel 1 (
   echo WAARSCHUWING: dagelijkse taak kon niet worden aangemaakt.
   echo De app zelf kan wel lokaal draaien.
