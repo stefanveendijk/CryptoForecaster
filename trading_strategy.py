@@ -103,6 +103,8 @@ def _signal_name(previous: float, target: float) -> str:
         return "VERKOPEN"
     if target < previous:
         return "AFBOUWEN"
+    if target == 0.0:
+        return "WACHTEN"
     return "AANHOUDEN"
 
 
