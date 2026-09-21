@@ -118,8 +118,8 @@ canvas{width:100%;height:100%;display:block}
 <div class="section">
   <div class="section-head">
     <div>
-      <h2>Experimentele verdeling tussen BTC, ETH en cash</h2>
-      <div class="sub">De app kiest hoeveel geld naar BTC, ETH of cash gaat op basis van marktbeeld en betrouwbaarheid van het model</div>
+      <h2>Experimentele verdeling tussen BTC, ETH en cash – versie 2</h2>
+      <div class="sub">Rustigere versie: minimaal 7 dagen vasthouden, alleen wisselen bij een duidelijk verschil en sneller meer cash bij onrust</div>
     </div>
     <span class="sub">Alleen ter vergelijking; de huidige strategie blijft leidend</span>
   </div>
@@ -419,7 +419,7 @@ function renderPortfolio(){
     return;
   }
   box.className='';
-  const a=portfolio.recommendedAllocation||{},m=portfolio.backtest||{},r=portfolio.last12Months||{};
+  const a=portfolio.recommendedAllocation||{},m=portfolio.backtest||{},oldm=portfolio.previousVersionBacktest||{},r=portfolio.last12Months||{};
   const q=portfolio.quality||{},cf=portfolio.confidence||{},sc=portfolio.scores||{},ch=portfolio.checks||{};
   const years=portfolio.calendarYears||[];
   const stress=(portfolio.costStress||[]).map(x=>`${pct(x.transactionCost)} → CAGR ${pct(x.cagr)}`).join(' · ');
@@ -445,12 +445,12 @@ function renderPortfolio(){
       </div>
       <div>
         <div class="signal-details">
-          <div class="stat"><div class="l">Gemiddeld rendement per jaar</div><div class="n">${pct(m.cagr)}</div></div>
+          <div class="stat"><div class="l">Versie 2: gemiddeld rendement per jaar</div><div class="n">${pct(m.cagr)}</div></div>
+          <div class="stat"><div class="l">Vorige versie: gemiddeld rendement per jaar</div><div class="n">${pct(oldm.cagr)}</div></div>
           <div class="stat"><div class="l">50/50 BTC-ETH vasthouden: per jaar</div><div class="n">${pct(m.benchmarkCagr)}</div></div>
           <div class="stat"><div class="l">Grootste tussentijdse daling</div><div class="n">${pct(m.maxDrawdown)}</div></div>
           <div class="stat"><div class="l">Rendement in verhouding tot risico</div><div class="n">${num(m.sharpe,2)}</div></div>
-          <div class="stat"><div class="l">Laatste 12 mnd</div><div class="n">${pct(r.totalReturn)}</div></div>
-          <div class="stat"><div class="l">Jaren met winst</div><div class="n">${portfolio.positiveYears??0}/${years.length}</div></div>
+          <div class="stat"><div class="l">Keren dat de verdeling veranderde</div><div class="n">${m.allocationChanges??'—'}</div></div>
         </div>
         <div class="audit-checks">
           <span class="audit-check">100%-doel</span>${yn(ch.annualTargetReached)}
@@ -460,12 +460,13 @@ function renderPortfolio(){
         </div>
         <div class="audit-meta">
           Gemiddeld belegd: ${pct(m.averageInvested)} · BTC ${pct(m.averageBTC)} ·
-          ETH ${pct(m.averageETH)} · cash ${pct(m.averageCash)} ·
-          keren dat de verdeling veranderde: ${m.allocationChanges??'—'}.<br>
+          ETH ${pct(m.averageETH)} · cash ${pct(m.averageCash)}.<br>
+          Vorige versie wijzigde de verdeling ${oldm.allocationChanges??'—'} keer; versie 2 ${m.allocationChanges??'—'} keer.<br>
+          Laatste 12 maanden versie 2: ${pct(r.totalReturn)} · jaren met winst: ${portfolio.positiveYears??0}/${years.length}.<br>
           Effect van hogere handelskosten: ${stress||'—'}.
         </div>
         <div class="signal-note">
-          Deze test verdeelt geld alleen over BTC, ETH en cash en gebruikt geen geleend geld. De berekening gebruikt alleen informatie die op dat moment beschikbaar was. De huidige handelsstrategie blijft leidend totdat deze nieuwe aanpak aantoonbaar beter en stabieler is.
+          Versie 2 probeert vooral minder vaak te handelen. Normaal blijft een positie minimaal 7 dagen staan. BTC en ETH worden alleen omgewisseld als het verschil duidelijk genoeg is. Bij een zwakke of onrustige markt mag de app eerder naar cash. De huidige handelsstrategie blijft leidend totdat deze nieuwe aanpak aantoonbaar beter en stabieler is.
         </div>
       </div>
     </div>`;
