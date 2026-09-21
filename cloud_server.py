@@ -218,7 +218,7 @@ def startup():
 def root():
     page=APP_DIR/"local_dashboard.html"
     if page.exists():
-        return FileResponse(page,media_type="text/html")
+        return FileResponse(page,media_type="text/html",headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0","Pragma":"no-cache","Expires":"0"})
     return {
         "name":"Crypto Forecaster",
         "ok":True,
