@@ -28,6 +28,7 @@
   <h2>Actuele signalen</h2><p class="intro">Kansmodel voor BTC en ETH. Geen koop- of verkoopgarantie.</p>
   <div id="forecasts" class="grid"></div>
   <section class="section"><h2>Modelkwaliteit</h2><div id="metrics"></div></section>
+  <section class="section"><h2>Live bewijslaag</h2><p class="intro">Alleen voorspellingen die vooraf zijn vastgelegd tellen mee.</p><div id="proof"></div></section>
   <section class="section"><h2>Recente nieuwsevents</h2><div id="events"><div class="muted">Geen events beschikbaar.</div></div></section>
 </main>
 <nav><span class="status" id="status">Live data laden…</span></nav>
@@ -43,6 +44,11 @@ async function load(){
     document.getElementById('forecasts').innerHTML=fs.map(f=>`<div class="card"><div class="row"><div><div class="coin">${f.coin} · ${f.horizon}d</div><div class="h">kans op stijging</div></div><div class="prob">${pct(f.probUp,0)}</div></div><div class="row" style="margin-top:12px"><span class="muted">Verwachte return</span><span class="ret ${f.predReturn>=0?'pos':'neg'}">${pct(f.predReturn)}</span></div><div class="row" style="margin-top:8px"><span class="muted">Verwachte koers</span><span class="metric">${eur(f.expectedPrice)}</span></div><div class="pill">confidence ${pct(f.confidenceScore,0)}</div></div>`).join('');
     const ms=(d.metrics||[]).filter(m=>String(m.expert).toUpperCase()==='META').sort((a,b)=>a.coin.localeCompare(b.coin)||a.horizon-b.horizon);
     document.getElementById('metrics').innerHTML=ms.map(m=>`<div class="card small"><div class="row"><span class="coin" style="font-size:15px">${m.coin} · ${m.horizon}d</span><span class="metric">AUC ${m.auc==null?'—':Number(m.auc).toFixed(3)}</span></div><div class="muted" style="margin-top:6px">Brier ${m.brier==null?'—':Number(m.brier).toFixed(3)} · accuracy ${pct(m.accuracy,0)}</div></div>`).join('');
+    const proof=d.proof||{};
+    const ps=(proof.summaries||[]).sort((a,b)=>a.coin.localeCompare(b.coin)||a.horizon-b.horizon);
+    document.getElementById('proof').innerHTML=!proof.started
+      ? `<div class="card small"><div class="muted">${proof.message||'De bewijslaag start bij de eerstvolgende modelrun.'}</div></div>`
+      : ps.map(x=>`<div class="card small"><div class="row"><span class="coin" style="font-size:15px">${x.coin} · ${x.horizon}d</span><span class="metric">${x.resolved}/${x.issued} beoordeeld</span></div><div class="muted" style="margin-top:6px">richting ${pct(x.directionAccuracy,0)} · 95%-interval ${pct(x.directionCi95Low,0)}–${pct(x.directionCi95High,0)} · Brier ${x.brier==null?'—':Number(x.brier).toFixed(3)} vs 0,250 · rendementsfout ${pct(x.maeReturn)}</div></div>`).join('');
     const es=(d.events||[]).slice(0,20); if(es.length) document.getElementById('events').innerHTML=es.map(e=>`<div class="card small"><div class="row"><span class="coin" style="font-size:15px">${e.coin} · ${(e.topic||'').replaceAll('_',' ')}</span><span class="metric">${e.sentiment||'unknown'}</span></div><div class="muted" style="margin-top:6px">${new Date(e.date).toLocaleDateString('nl-NL')} · ${e.articleCount||0} artikelen</div></div>`).join('');
   }catch(e){document.getElementById('status').innerHTML='<span class="error">Data niet beschikbaar</span>';document.getElementById('dot').style.background='var(--red)';document.getElementById('forecasts').innerHTML='<div class="card error">De nieuwste modeldata kon niet worden geladen.</div>';}
 }
