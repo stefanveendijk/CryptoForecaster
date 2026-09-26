@@ -1,0 +1,67 @@
+name: Crypto Forecaster Proof CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install proof-layer dependencies
+        run: python -m pip install numpy pandas
+      - name: Syntax check
+        run: python -m py_compile forecast_proof.py crypto_forecaster_ultimate.py cloud_server.py
+      - name: Proof ledger smoke test
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import tempfile
+          import pandas as pd
+          import forecast_proof
+
+          with tempfile.TemporaryDirectory() as td:
+              out = Path(td)
+              latest = pd.DataFrame([{
+                  "date": "2026-09-01",
+                  "coin": "BTC",
+                  "horizon": 7,
+                  "model": "META",
+                  "current_price": 100.0,
+                  "prob_up": 0.70,
+                  "pred_ret": 0.10,
+                  "low80": -0.05,
+                  "high80": 0.20,
+                  "expected_price": 110.0,
+                  "low80_price": 95.0,
+                  "high80_price": 120.0,
+                  "confidence_score": 0.80,
+                  "ood_fraction": 0.01,
+                  "expert_disagreement": 0.02,
+              }])
+
+              first = forecast_proof.record_forecasts(out, latest)
+              second = forecast_proof.record_forecasts(out, latest)
+              assert first["added"] == 1
+              assert second["added"] == 0
+
+              prices = pd.DataFrame(
+                  {"BTC_close": [100.0, 105.0, 111.0]},
+                  index=pd.to_datetime(["2026-09-01", "2026-09-07", "2026-09-08"]),
+              )
+              results = forecast_proof.evaluate_ledger(out, prices)
+              summary = forecast_proof.build_summary(out, prices)
+              assert len(results) == 1
+              assert summary["resolvedTotal"] == 1
+              assert bool(results.iloc[0]["direction_correct"]) is True
+          PY
