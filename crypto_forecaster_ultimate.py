@@ -9,6 +9,7 @@ import providers
 import features as feat
 import modeling
 import advanced_features
+import forecast_proof
 
 # Reused news/event engine
 import news_core
@@ -212,6 +213,16 @@ def run(cfg:Config, workdir:Path, force=False):
             lambda z: json.dumps(z) if isinstance(z,dict) else z
         )
     latest.to_csv(outdir/"latest_forecasts.csv",index=False)
+
+    # Live proof layer: once issued, a META forecast is never overwritten for the
+    # same model date. Matured forecasts are scored against later observed prices.
+    try:
+        proof_record = forecast_proof.record_forecasts(outdir, latest)
+        proof_prices = df[price_cols].copy() if price_cols else pd.DataFrame()
+        proof_results = forecast_proof.evaluate_ledger(outdir, proof_prices)
+        print(f"  [PROOF] nieuw vastgelegd={proof_record['added']} · beoordeeld={len(proof_results)}")
+    except Exception as e:
+        print("WAARSCHUWING bewijslaag:", e)
 
     last=df.index.max()
     snapshot=df.loc[last].dropna()
