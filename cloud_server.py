@@ -16,6 +16,7 @@ import requests
 import trading_strategy
 import strategy_audit
 import portfolio_strategy
+import forecast_proof
 from fastapi import FastAPI, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -461,6 +462,15 @@ def strategy_audit_endpoint(
         return strategy_audit.build_audit(OUTPUT_DIR,prices,coin)
     except Exception as e:
         raise HTTPException(500,f"Strategie-audit mislukt: {e}")
+
+@app.get("/api/v1/proof")
+def proof():
+    try:
+        prices=load_price_history(allow_download=False)
+        return forecast_proof.build_summary(OUTPUT_DIR,prices)
+    except Exception as e:
+        raise HTTPException(500,f"Live bewijslaag mislukt: {e}")
+
 
 @app.get("/api/v1/history")
 def history(
