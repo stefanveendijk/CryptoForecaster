@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pandas as pd
 
+import forecast_proof
+
 
 def clean(v):
     if v is None:
@@ -96,6 +98,15 @@ def main() -> None:
                 "eventZ90": clean(r.get("event_z90")),
             })
 
+    prices = pd.DataFrame()
+    price_path = output / "price_history.csv"
+    if price_path.exists():
+        try:
+            prices = pd.read_csv(price_path, parse_dates=["date"]).set_index("date").sort_index()
+        except Exception:
+            prices = pd.DataFrame()
+    proof = forecast_proof.build_summary(output, prices)
+
     updated = max((f["date"] for f in forecasts), default="")
     payload = {
         "updatedAt": updated,
@@ -103,6 +114,7 @@ def main() -> None:
         "forecasts": forecasts,
         "metrics": metrics,
         "events": events,
+        "proof": proof,
     }
     (data_dir / "dashboard.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
