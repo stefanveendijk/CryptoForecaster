@@ -20,7 +20,7 @@ jobs:
       - name: Install proof-layer dependencies
         run: python -m pip install numpy pandas
       - name: Syntax check
-        run: python -m py_compile forecast_proof.py crypto_forecaster_ultimate.py cloud_server.py
+        run: python -m py_compile forecast_proof.py crypto_forecaster_ultimate.py cloud_server.py scripts/export_pages_data.py
       - name: Proof ledger smoke test
         shell: bash
         run: |
