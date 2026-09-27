@@ -56,8 +56,18 @@ if %RC% GEQ 8 goto :fail
 if exist "%CFTMP%" rmdir /s /q "%CFTMP%" >nul 2>nul
 
 echo.
+echo Dagelijkse modelrun controleren...
+if exist "setup_daily_task.bat" (
+  call setup_daily_task.bat
+  if errorlevel 1 (
+    echo WAARSCHUWING: automatische dagelijkse taak kon niet worden ingesteld.
+  )
+)
+
+echo.
 echo UPDATE GESLAAGD.
 echo .venv en local_data zijn behouden.
+echo Dagelijkse modelrun: 06:30.
 echo De lokale app wordt nu gestart.
 echo.
 call start_local_app.bat
