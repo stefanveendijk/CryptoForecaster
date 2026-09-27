@@ -24,18 +24,10 @@ if errorlevel 1 goto :fail
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 goto :fail
 if not exist local_data mkdir local_data
-schtasks /Create /TN "CryptoForecaster Daily" /TR "\"%CD%\run_daily_local.bat\"" /SC DAILY /ST 05:30 /F /RL LIMITED
+call setup_daily_task.bat
 if errorlevel 1 (
-  echo WAARSCHUWING: dagelijkse taak kon niet worden aangemaakt.
+  echo WAARSCHUWING: dagelijkse taak kon niet automatisch worden ingesteld.
   echo De app zelf kan wel lokaal draaien.
-) else (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; Set-ScheduledTask -TaskName 'CryptoForecaster Daily' -Settings $s | Out-Null" >nul 2>nul
-  if errorlevel 1 (
-    echo WAARSCHUWING: wake-instelling kon niet automatisch worden gezet.
-    echo De dagelijkse taak zelf is wel aangemaakt.
-  ) else (
-    echo Dagelijkse taak ingesteld op 05:30, inclusief WakeToRun.
-  )
 )
 echo.
 echo INSTALLATIE GESLAAGD.
