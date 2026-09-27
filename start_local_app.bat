@@ -49,6 +49,15 @@ if errorlevel 1 (
 )
 
 if not exist local_data mkdir local_data
+
+rem Houd de dagelijkse modelrun automatisch op 06:30 ingesteld.
+if exist "setup_daily_task.bat" (
+  call setup_daily_task.bat >nul 2>nul
+  if errorlevel 1 (
+    echo WAARSCHUWING: dagelijkse modelrun kon niet automatisch worden ingesteld.
+  )
+)
+
 set "DATA_DIR=%CD%\local_data"
 set "AUTO_RUN_MODEL=false"
 set "LOCAL_MODE=true"
