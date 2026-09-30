@@ -64,6 +64,12 @@ set "LOCAL_MODE=true"
 set "MODEL_NEWS=true"
 set "MODEL_DEEP=false"
 
+rem Herstel de bewijslaag alleen met een voorspelling van vandaag. Oude voorspellingen
+rem worden nooit achteraf toegevoegd, omdat de uitkomst dan al bekend kan zijn.
+if exist "repair_proof_local.py" (
+  "%CD%\.venv\Scripts\python.exe" "%CD%\repair_proof_local.py" "%DATA_DIR%" >nul 2>nul
+)
+
 echo.
 echo Oude lokale server op poort 8080 wordt indien nodig afgesloten...
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8080" ^| findstr "LISTENING"') do (
