@@ -8,6 +8,13 @@ from pathlib import Path
 
 import pandas as pd
 
+# When this file is executed as `python scripts/export_pages_data.py`, Python puts
+# the scripts directory (not the repository root) on sys.path. Add the root
+# explicitly so shared modules such as forecast_proof can always be imported.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import forecast_proof
 
 
