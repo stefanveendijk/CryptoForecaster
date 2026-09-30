@@ -38,6 +38,7 @@ jobs:
           key: crypto-model-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             crypto-model-${{ runner.os }}-
+          save-always: true
 
       - name: Install dependencies
         run: |
