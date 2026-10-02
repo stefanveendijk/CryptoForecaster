@@ -63,11 +63,29 @@ set "AUTO_RUN_MODEL=false"
 set "LOCAL_MODE=true"
 set "MODEL_NEWS=true"
 set "MODEL_DEEP=false"
+set "LATEST=%DATA_DIR%\ultimate_run\output\latest_forecasts.csv"
 
-rem Herstel de bewijslaag alleen met een voorspelling van vandaag. Oude voorspellingen
-rem worden nooit achteraf toegevoegd, omdat de uitkomst dan al bekend kan zijn.
+rem Herstel eerst eventueel al bestaande, vooraf gemaakte voorspellingen in de bewijslaag.
 if exist "repair_proof_local.py" (
   "%CD%\.venv\Scripts\python.exe" "%CD%\repair_proof_local.py" "%DATA_DIR%" >nul 2>nul
+)
+
+rem Extra vangnet: vanaf 06:30 moet er iedere kalenderdag een nieuw lokaal
+rem latest_forecasts.csv zijn. Als Windows Taakplanner de run heeft gemist,
+rem voeren we hem bij het openen van de app alsnog uit. Dit maakt de bewijslaag
+rem niet langer afhankelijk van alleen de Taakplanner.
+set "NEED_CATCHUP=0"
+for /f %%i in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$now=Get-Date; $due=$now.Date.AddHours(6).AddMinutes(30); if($now -lt $due){'0'} elseif(-not (Test-Path -LiteralPath $env:LATEST)){'1'} else {$p=Get-Item -LiteralPath $env:LATEST; if($p.LastWriteTime.Date -lt $now.Date){'1'} else {'0'}}"') do set "NEED_CATCHUP=%%i"
+
+if "%NEED_CATCHUP%"=="1" (
+  echo.
+  echo Dagelijkse modelrun van vandaag ontbreekt. Automatische inhaalrun wordt uitgevoerd...
+  call run_daily_local.bat
+  if errorlevel 1 (
+    echo WAARSCHUWING: automatische inhaalrun is mislukt. Zie local_data\daily_model.log.
+  ) else (
+    echo Inhaalrun gereed en bewijslaag gecontroleerd.
+  )
 )
 
 echo.
