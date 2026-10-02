@@ -23,7 +23,7 @@ jobs:
         run: python -m py_compile forecast_proof.py repair_proof_local.py crypto_forecaster_ultimate.py cloud_server.py scripts/export_pages_data.py
       - name: Static exporter import check
         run: python -c "import runpy; runpy.run_path('scripts/export_pages_data.py', run_name='proof_import_check')"
-      - name: Proof ledger smoke test
+      - name: Proof ledger daily issuance test
         shell: bash
         run: |
           python - <<'PY'
@@ -52,19 +52,40 @@ jobs:
                   "expert_disagreement": 0.02,
               }])
 
-              first = forecast_proof.record_forecasts(out, latest)
-              second = forecast_proof.record_forecasts(out, latest)
+              first = forecast_proof.record_forecasts(
+                  out, latest, issued_at_utc="2026-09-01T06:00:00+00:00"
+              )
+              same_day = forecast_proof.record_forecasts(
+                  out, latest, issued_at_utc="2026-09-01T18:00:00+00:00"
+              )
+              next_day = forecast_proof.record_forecasts(
+                  out, latest, issued_at_utc="2026-09-02T06:00:00+00:00"
+              )
+              too_late = forecast_proof.record_forecasts(
+                  out, latest, issued_at_utc="2026-09-09T01:00:00+00:00"
+              )
+
               assert first["added"] == 1
-              assert second["added"] == 0
+              assert same_day["added"] == 0
+              assert next_day["added"] == 1
+              assert too_late["added"] == 0
+              assert too_late["skipped_late"] == 1
+
+              ledger = pd.read_csv(out / "forecast_ledger.csv")
+              assert list(ledger["issue_date"]) == ["2026-09-01", "2026-09-02"]
 
               prices = pd.DataFrame(
-                  {"BTC_close": [100.0, 105.0, 111.0]},
-                  index=pd.to_datetime(["2026-09-01", "2026-09-07", "2026-09-08"]),
+                  {"BTC_close": [100.0, 111.0]},
+                  index=pd.to_datetime(["2026-09-01", "2026-09-08"]),
               )
               results = forecast_proof.evaluate_ledger(out, prices)
               summary = forecast_proof.build_summary(out, prices)
-              assert len(results) == 1
-              assert summary["resolvedTotal"] == 1
+              row = summary["summaries"][0]
+              assert len(results) == 2
+              assert row["issued"] == 2
+              assert row["resolved"] == 2
+              assert row["metricSample"] == 1
+              assert row["duplicateResolvedExcluded"] == 1
               assert bool(results.iloc[0]["direction_correct"]) is True
           PY
       - name: Local recovery integrity test
@@ -87,41 +108,30 @@ jobs:
               today = date.today()
               yesterday = today - timedelta(days=1)
               too_old = today - timedelta(days=2)
-              rows = [
+              pd.DataFrame([
                   {
-                      "date": str(yesterday),
-                      "coin": "BTC",
-                      "horizon": 1,
-                      "model": "META",
-                      "current_price": 100.0,
-                      "prob_up": 0.55,
-                      "pred_ret": 0.01,
-                      "low80": -0.03,
-                      "high80": 0.04,
+                      "date": str(yesterday), "coin": "BTC", "horizon": 1,
+                      "model": "META", "current_price": 100.0,
+                      "prob_up": 0.55, "pred_ret": 0.01,
+                      "low80": -0.03, "high80": 0.04,
                   },
                   {
-                      "date": str(too_old),
-                      "coin": "ETH",
-                      "horizon": 1,
-                      "model": "META",
-                      "current_price": 100.0,
-                      "prob_up": 0.55,
-                      "pred_ret": 0.01,
-                      "low80": -0.03,
-                      "high80": 0.04,
+                      "date": str(too_old), "coin": "ETH", "horizon": 1,
+                      "model": "META", "current_price": 100.0,
+                      "prob_up": 0.55, "pred_ret": 0.01,
+                      "low80": -0.03, "high80": 0.04,
                   },
-              ]
-              latest_path = out / "latest_forecasts.csv"
-              pd.DataFrame(rows).to_csv(latest_path, index=False)
+              ]).to_csv(out / "latest_forecasts.csv", index=False)
 
               evidence_time = datetime.combine(today, time(hour=6), tzinfo=timezone.utc)
               ts = evidence_time.timestamp()
-              os.utime(latest_path, (ts, ts))
+              os.utime(out / "latest_forecasts.csv", (ts, ts))
 
               subprocess.run([sys.executable, "repair_proof_local.py", str(data)], check=True)
               ledger = pd.read_csv(out / "forecast_ledger.csv")
               assert len(ledger) == 1
               assert ledger.iloc[0]["forecast_date"] == str(yesterday)
+              assert ledger.iloc[0]["issue_date"] == str(today)
               assert ledger.iloc[0]["coin"] == "BTC"
               assert str(ledger.iloc[0]["issued_at_utc"]).startswith(str(today))
           PY
