@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import os
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +13,7 @@ LEDGER_FILE = "forecast_ledger.csv"
 RESULTS_FILE = "forecast_proof_results.csv"
 
 LEDGER_COLUMNS = [
-    "issued_at_utc", "forecast_date", "coin", "horizon", "model",
+    "issued_at_utc", "issue_date", "forecast_date", "coin", "horizon", "model",
     "current_price", "prob_up", "pred_ret", "low80", "high80",
     "expected_price", "low80_price", "high80_price",
     "confidence_score", "ood_fraction", "expert_disagreement",
@@ -44,36 +44,81 @@ def _atomic_csv(df: pd.DataFrame, path: Path) -> None:
     os.replace(tmp, path)
 
 
-def record_forecasts(output_dir: Path, latest: pd.DataFrame) -> dict[str, int]:
-    """Append new META forecasts to an immutable issuance ledger.
+def _parse_issued_at(value: Any = None) -> datetime:
+    if value is None:
+        return datetime.now(timezone.utc)
+    try:
+        dt = pd.Timestamp(value).to_pydatetime()
+    except Exception:
+        return datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
-    A key is forecast_date + coin + horizon + model. Re-running the model for the
-    same model date never rewrites the original prediction.
+
+def _issue_date_from_row(row: pd.Series) -> str:
+    raw = row.get("issue_date")
+    try:
+        if raw is not None and not pd.isna(raw) and str(raw).strip():
+            return str(pd.Timestamp(raw).date())
+    except Exception:
+        pass
+    raw = row.get("issued_at_utc")
+    try:
+        if raw is not None and not pd.isna(raw) and str(raw).strip():
+            return str(pd.Timestamp(raw).date())
+    except Exception:
+        pass
+    try:
+        return str(pd.Timestamp(row.get("forecast_date")).date())
+    except Exception:
+        return ""
+
+
+def _migrate_ledger(existing: pd.DataFrame) -> pd.DataFrame:
+    if existing.empty:
+        return pd.DataFrame(columns=LEDGER_COLUMNS)
+    d = existing.copy()
+    for c in LEDGER_COLUMNS:
+        if c not in d.columns:
+            d[c] = np.nan
+    d["issue_date"] = d.apply(_issue_date_from_row, axis=1)
+    return d[LEDGER_COLUMNS]
+
+
+def record_forecasts(
+    output_dir: Path,
+    latest: pd.DataFrame,
+    issued_at_utc: Any = None,
+) -> dict[str, int]:
+    """Append one immutable META forecast per issuance day, coin and horizon.
+
+    forecast_date remains the model's market-data date and is used for scoring.
+    issue_date records the day the forecast was actually issued. Same-day reruns
+    do not create duplicates. A late row is refused when its outcome could already
+    have been known.
     """
     path = output_dir / LEDGER_FILE
-    existing = _read_csv(path)
+    raw_existing = _read_csv(path)
+    existing = _migrate_ledger(raw_existing)
     if latest is None or latest.empty:
-        return {"existing": int(len(existing)), "added": 0}
+        return {"existing": int(len(existing)), "added": 0, "skipped_late": 0}
 
     src = latest.copy()
     if "model" in src.columns:
         src = src[src["model"].astype(str).str.upper() == "META"].copy()
     if src.empty:
-        return {"existing": int(len(existing)), "added": 0}
+        return {"existing": int(len(existing)), "added": 0, "skipped_late": 0}
 
-    if existing.empty:
-        existing = pd.DataFrame(columns=LEDGER_COLUMNS)
-    else:
-        for c in LEDGER_COLUMNS:
-            if c not in existing.columns:
-                existing[c] = np.nan
+    issued_dt = _parse_issued_at(issued_at_utc)
+    issued_at = issued_dt.isoformat()
+    issue_date = str(issued_dt.date())
 
-    key_cols = ["forecast_date", "coin", "horizon", "model"]
-    existing_keys = set()
+    existing_keys: set[tuple[str, str, int, str]] = set()
     for _, r in existing.iterrows():
         try:
             existing_keys.add((
-                str(pd.Timestamp(r["forecast_date"]).date()),
+                _issue_date_from_row(r),
                 str(r["coin"]).upper(),
                 int(r["horizon"]),
                 str(r["model"]).upper(),
@@ -81,12 +126,12 @@ def record_forecasts(output_dir: Path, latest: pd.DataFrame) -> dict[str, int]:
         except Exception:
             continue
 
-    issued_at = datetime.now(timezone.utc).isoformat()
     rows: list[dict[str, Any]] = []
-
+    skipped_late = 0
     for _, r in src.iterrows():
         try:
-            forecast_date = str(pd.Timestamp(r.get("date")).date())
+            forecast_date_obj = pd.Timestamp(r.get("date")).date()
+            forecast_date = str(forecast_date_obj)
             coin = str(r.get("coin", "")).upper()
             horizon = int(r.get("horizon"))
             model = str(r.get("model", "META")).upper()
@@ -94,12 +139,22 @@ def record_forecasts(output_dir: Path, latest: pd.DataFrame) -> dict[str, int]:
             continue
         if not coin or horizon <= 0:
             continue
-        key = (forecast_date, coin, horizon, model)
+
+        target_date = forecast_date_obj + timedelta(days=horizon)
+        outcome_cutoff = datetime.combine(
+            target_date + timedelta(days=1), time.min, tzinfo=timezone.utc
+        )
+        if issued_dt >= outcome_cutoff:
+            skipped_late += 1
+            continue
+
+        key = (issue_date, coin, horizon, model)
         if key in existing_keys:
             continue
 
-        row = {
+        rows.append({
             "issued_at_utc": issued_at,
+            "issue_date": issue_date,
             "forecast_date": forecast_date,
             "coin": coin,
             "horizon": horizon,
@@ -115,16 +170,20 @@ def record_forecasts(output_dir: Path, latest: pd.DataFrame) -> dict[str, int]:
             "confidence_score": _clean(r.get("confidence_score")),
             "ood_fraction": _clean(r.get("ood_fraction")),
             "expert_disagreement": _clean(r.get("expert_disagreement")),
-        }
-        rows.append(row)
+        })
         existing_keys.add(key)
 
     if rows:
         combined = pd.concat([existing, pd.DataFrame(rows)], ignore_index=True)
-        combined = combined[LEDGER_COLUMNS]
-        _atomic_csv(combined, path)
+        _atomic_csv(combined[LEDGER_COLUMNS], path)
+    elif not existing.empty and "issue_date" not in raw_existing.columns:
+        _atomic_csv(existing, path)
 
-    return {"existing": int(len(existing)), "added": int(len(rows))}
+    return {
+        "existing": int(len(existing)),
+        "added": int(len(rows)),
+        "skipped_late": int(skipped_late),
+    }
 
 
 def _normalise_prices(prices: pd.DataFrame) -> pd.DataFrame:
@@ -148,14 +207,13 @@ def _normalise_prices(prices: pd.DataFrame) -> pd.DataFrame:
 
 
 def evaluate_ledger(output_dir: Path, prices: pd.DataFrame) -> pd.DataFrame:
-    ledger = _read_csv(output_dir / LEDGER_FILE)
+    ledger = _migrate_ledger(_read_csv(output_dir / LEDGER_FILE))
     px = _normalise_prices(prices)
     if ledger.empty or px.empty:
         return pd.DataFrame()
 
     rows: list[dict[str, Any]] = []
     max_date = px.index.max()
-
     for _, r in ledger.iterrows():
         try:
             start_date = pd.Timestamp(r["forecast_date"]).normalize()
@@ -170,9 +228,8 @@ def evaluate_ledger(output_dir: Path, prices: pd.DataFrame) -> pd.DataFrame:
             continue
 
         start_price = _clean(r.get("current_price"))
-        if start_price is None:
-            if start_date in px.index:
-                start_price = _clean(px.at[start_date, price_col])
+        if start_price is None and start_date in px.index:
+            start_price = _clean(px.at[start_date, price_col])
         if start_price is None or start_price <= 0:
             continue
 
@@ -180,7 +237,6 @@ def evaluate_ledger(output_dir: Path, prices: pd.DataFrame) -> pd.DataFrame:
         if eligible.empty:
             continue
         actual_date = eligible.index[0]
-        # Crypto trades every day; reject a large gap rather than silently using stale data.
         if (actual_date - target_date).days > 2:
             continue
 
@@ -195,9 +251,9 @@ def evaluate_ledger(output_dir: Path, prices: pd.DataFrame) -> pd.DataFrame:
         actual_ret = target_price / start_price - 1.0
         actual_up = 1 if actual_ret >= 0 else 0
         predicted_up = 1 if prob_up >= 0.5 else 0
-
         rows.append({
             "issued_at_utc": r.get("issued_at_utc"),
+            "issue_date": _issue_date_from_row(r),
             "forecast_date": str(start_date.date()),
             "target_date": str(target_date.date()),
             "actual_date": str(actual_date.date()),
@@ -224,7 +280,9 @@ def evaluate_ledger(output_dir: Path, prices: pd.DataFrame) -> pd.DataFrame:
 
     result = pd.DataFrame(rows)
     if not result.empty:
-        result = result.sort_values(["actual_date", "coin", "horizon"]).reset_index(drop=True)
+        result = result.sort_values(
+            ["actual_date", "coin", "horizon", "issue_date"]
+        ).reset_index(drop=True)
         _atomic_csv(result, output_dir / RESULTS_FILE)
     return result
 
@@ -249,30 +307,45 @@ def _binom_two_sided_half(k: int, n: int) -> float | None:
     return min(1.0, 2.0 * tail)
 
 
-def _summary_row(d: pd.DataFrame, issued: int, coin: str, horizon: int) -> dict[str, Any]:
-    n = int(len(d))
-    pending = max(0, int(issued) - n)
-    if n == 0:
+def _summary_row(resolved: pd.DataFrame, issued: int, coin: str, horizon: int) -> dict[str, Any]:
+    resolved_n = int(len(resolved))
+    pending = max(0, int(issued) - resolved_n)
+    if resolved_n == 0:
         return {
             "coin": coin, "horizon": int(horizon), "issued": int(issued),
-            "resolved": 0, "pending": pending, "sampleStatus": "collecting",
+            "resolved": 0, "pending": pending, "metricSample": 0,
+            "duplicateResolvedExcluded": 0, "sampleStatus": "collecting",
         }
 
-    correct = int(d["direction_correct"].sum())
+    metric_df = (
+        resolved.sort_values(["forecast_date", "issue_date"])
+        .drop_duplicates(
+            subset=["forecast_date", "coin", "horizon", "model"], keep="first"
+        )
+        .copy()
+    )
+    n = int(len(metric_df))
+    duplicate_excluded = resolved_n - n
+    correct = int(metric_df["direction_correct"].sum())
     acc = correct / n
     lo, hi = _wilson_interval(correct, n)
-    brier = float(d["brier"].mean())
-    baseline_brier = float(d["neutral_brier"].mean())
-    mae = float(d["abs_return_error"].mean())
-    baseline_mae = float(d["zero_return_abs_error"].mean())
-    coverage = float(pd.to_numeric(d["interval80_hit"], errors="coerce").dropna().mean()) if d["interval80_hit"].notna().any() else None
+    brier = float(metric_df["brier"].mean())
+    baseline_brier = float(metric_df["neutral_brier"].mean())
+    mae = float(metric_df["abs_return_error"].mean())
+    baseline_mae = float(metric_df["zero_return_abs_error"].mean())
+    coverage = (
+        float(pd.to_numeric(metric_df["interval80_hit"], errors="coerce").dropna().mean())
+        if metric_df["interval80_hit"].notna().any() else None
+    )
 
     return {
         "coin": coin,
         "horizon": int(horizon),
         "issued": int(issued),
-        "resolved": n,
+        "resolved": resolved_n,
         "pending": pending,
+        "metricSample": n,
+        "duplicateResolvedExcluded": int(duplicate_excluded),
         "sampleStatus": "usable" if n >= 100 else ("early" if n >= 30 else "collecting"),
         "directionAccuracy": acc,
         "directionCorrect": correct,
@@ -286,21 +359,18 @@ def _summary_row(d: pd.DataFrame, issued: int, coin: str, horizon: int) -> dict[
         "zeroReturnMae": baseline_mae,
         "maeSkillVsZero": (1.0 - mae / baseline_mae) if baseline_mae > 0 else None,
         "coverage80": coverage,
-        "firstForecast": str(d["forecast_date"].min()),
-        "lastResolved": str(d["actual_date"].max()),
+        "firstForecast": str(metric_df["forecast_date"].min()),
+        "lastResolved": str(resolved["actual_date"].max()),
     }
 
 
 def build_summary(output_dir: Path, prices: pd.DataFrame | None = None) -> dict[str, Any]:
-    ledger = _read_csv(output_dir / LEDGER_FILE)
+    ledger = _migrate_ledger(_read_csv(output_dir / LEDGER_FILE))
     if ledger.empty:
         return {
-            "available": True,
-            "started": False,
+            "available": True, "started": False,
             "message": "De live bewijslaag start zodra de eerstvolgende modelrun een voorspelling vastlegt.",
-            "summaries": [],
-            "recent": [],
-            "method": _method(),
+            "summaries": [], "recent": [], "method": _method(),
         }
 
     if prices is not None and not prices.empty:
@@ -310,32 +380,36 @@ def build_summary(output_dir: Path, prices: pd.DataFrame | None = None) -> dict[
 
     summaries: list[dict[str, Any]] = []
     keys = (
-        ledger[["coin", "horizon"]]
-        .dropna()
-        .drop_duplicates()
-        .sort_values(["coin", "horizon"])
+        ledger[["coin", "horizon"]].dropna().drop_duplicates().sort_values(["coin", "horizon"])
     )
     for _, k in keys.iterrows():
         coin = str(k["coin"]).upper()
         horizon = int(k["horizon"])
-        issued = int(((ledger["coin"].astype(str).str.upper() == coin) &
-                      (pd.to_numeric(ledger["horizon"], errors="coerce") == horizon)).sum())
+        ld = ledger[
+            (ledger["coin"].astype(str).str.upper() == coin)
+            & (pd.to_numeric(ledger["horizon"], errors="coerce") == horizon)
+        ].copy()
         if results.empty:
             d = pd.DataFrame()
         else:
             d = results[
-                (results["coin"].astype(str).str.upper() == coin) &
-                (pd.to_numeric(results["horizon"], errors="coerce") == horizon)
+                (results["coin"].astype(str).str.upper() == coin)
+                & (pd.to_numeric(results["horizon"], errors="coerce") == horizon)
             ].copy()
-        summaries.append(_summary_row(d, issued, coin, horizon))
+        row = _summary_row(d, len(ld), coin, horizon)
+        issue_dates = pd.to_datetime(ld["issue_date"], errors="coerce").dropna()
+        row["firstIssueDate"] = str(issue_dates.min().date()) if not issue_dates.empty else None
+        row["lastIssueDate"] = str(issue_dates.max().date()) if not issue_dates.empty else None
+        summaries.append(row)
 
     recent: list[dict[str, Any]] = []
     if not results.empty:
-        tail = results.sort_values("actual_date").tail(20).iloc[::-1]
+        tail = results.sort_values(["actual_date", "issue_date"]).tail(20).iloc[::-1]
         for _, r in tail.iterrows():
             recent.append({
                 "coin": str(r.get("coin", "")).upper(),
                 "horizon": int(r.get("horizon", 0)),
+                "issueDate": str(r.get("issue_date", "")),
                 "forecastDate": str(r.get("forecast_date", "")),
                 "targetDate": str(r.get("target_date", "")),
                 "predReturn": _clean(r.get("pred_ret")),
@@ -344,12 +418,14 @@ def build_summary(output_dir: Path, prices: pd.DataFrame | None = None) -> dict[
                 "directionCorrect": bool(r.get("direction_correct")),
             })
 
+    all_issue_dates = pd.to_datetime(ledger["issue_date"], errors="coerce").dropna()
     return {
         "available": True,
         "started": True,
         "issuedTotal": int(len(ledger)),
         "resolvedTotal": int(len(results)) if not results.empty else 0,
         "startedAt": str(ledger["issued_at_utc"].iloc[0]) if "issued_at_utc" in ledger else None,
+        "latestIssueDate": str(all_issue_dates.max().date()) if not all_issue_dates.empty else None,
         "summaries": summaries,
         "recent": recent,
         "method": _method(),
@@ -359,18 +435,21 @@ def build_summary(output_dir: Path, prices: pd.DataFrame | None = None) -> dict[
 def _method() -> dict[str, Any]:
     return {
         "ledger": (
-            "Elke META-voorspelling wordt bij eerste uitgifte vastgelegd en bij een "
-            "herberekening voor dezelfde modeldatum niet overschreven."
+            "Per uitgiftedag wordt voor iedere coin en horizon één META-voorspelling "
+            "onveranderlijk vastgelegd. De oorspronkelijke modeldatum blijft apart "
+            "bewaard voor de beoordeling."
+        ),
+        "independence": (
+            "Als twee uitgiftedagen dezelfde modeldatum gebruiken, worden beide uitgiftes "
+            "geregistreerd maar telt die modeldatum slechts één keer mee in de statistische vaardigheidsmeting."
         ),
         "baseline": (
-            "Richting wordt vergeleken met een neutrale 50/50-kans; rendement met "
-            "een nul-rendementsvoorspelling."
+            "Richting wordt vergeleken met een neutrale 50/50-kans; rendement met een nul-rendementsvoorspelling."
         ),
         "statistics": (
-            "De richting-hit-rate krijgt een Wilson 95%-interval en een verkennende "
-            "exacte binomiale vergelijking met 50%. Vooral 30/90-daagse voorspellingen "
-            "overlappen en zijn daardoor niet volledig onafhankelijk; de p-waarde mag "
-            "dus niet als definitief bewijs worden gelezen."
+            "De richting-hit-rate krijgt een Wilson 95%-interval en een verkennende exacte "
+            "binomiale vergelijking met 50%. Vooral 30/90-daagse voorspellingen overlappen "
+            "en zijn daardoor niet volledig onafhankelijk; de p-waarde is dus niet definitief bewijs."
         ),
         "sampleThresholds": {"early": 30, "usable": 100},
     }
