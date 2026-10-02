@@ -17,6 +17,14 @@ rem Voorkom slaapstand zolang de modelrun actief is.
 set RC=%ERRORLEVEL%
 
 if "%RC%"=="0" (
+  echo MODEL SUCCES %DATE% %TIME%>> "%LOG%"
+  rem Extra vangnet: controleer direct na elke geslaagde dagelijkse run of de
+  rem uitgifte ook werkelijk in de live bewijslaag staat en beoordeel rijpe regels.
+  if exist repair_proof_local.py (
+    ".venv\Scripts\python.exe" repair_proof_local.py "%DATA_DIR%" >> "%LOG%" 2>&1
+    set PRC=%ERRORLEVEL%
+    if not "%PRC%"=="0" echo BEWIJSLAAG WAARSCHUWING exitcode=%PRC% %DATE% %TIME%>> "%LOG%"
+  )
   echo SUCCES %DATE% %TIME%>> "%LOG%"
 ) else (
   echo FOUT exitcode=%RC% %DATE% %TIME%>> "%LOG%"
