@@ -166,7 +166,7 @@ class SharedForecastTests(unittest.TestCase):
         self.assertIn("forecastOrigin", local)
         self.assertIn("kans op daling", local)
         self.assertIn("actuele gedeelde online voorspellingen", local)
-        self.assertIn("GEEN ACTUEEL SIGNAAL", local)
+        self.assertIn("Geen actueel handelsadvies", local)
         self.assertIn("lastHistoryDate", local)
         self.assertIn("historyFreshness", local)
         self.assertIn("const validNumber=", local)
