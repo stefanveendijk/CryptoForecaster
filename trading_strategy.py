@@ -269,7 +269,9 @@ def build_strategy(
         raise ValueError("coin moet BTC of ETH zijn")
 
     frame, full = _backtest(output_dir, prices, coin)
-    latest = latest_override if latest_override is not None else _load_latest(output_dir, coin)
+    local_latest = _load_latest(output_dir, coin)
+    latest = latest_override if latest_override is not None else local_latest
+    local_model_date = str(local_latest.get(7, {}).get("date") or "")[:10]
     if latest_override is None:
         signal_source = "local-model"
     model_dates = {str(z.get("date") or "")[:10] for z in latest.values() if z}
@@ -357,6 +359,7 @@ def build_strategy(
         "signalHistoryComparable": latest_override is None,
         "modelDate": model_date,
         "backtestSource": "local-model-history",
+        "localModelDate": local_model_date,
         "targetAllocation": target,
         "currentAllocation": current,
         "modelPreviousAllocation": model_previous,
