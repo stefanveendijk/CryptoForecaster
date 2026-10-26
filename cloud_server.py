@@ -49,6 +49,16 @@ run_thread: threading.Thread | None = None
 kraken_cache: dict[str, Any] = {"ts": 0.0, "data": None}
 KRAKEN_CACHE_SECONDS = 30.0
 
+# The free GitHub Pages publication is the shared forecast source for the laptop.
+# Strategy and audit endpoints remain local and MUST be labelled separately.
+SHARED_FORECAST_URL = os.getenv(
+    "SHARED_FORECAST_URL",
+    "https://stefanveendijk.github.io/CryptoForecaster/data/dashboard.json",
+)
+SHARED_FORECAST_CACHE_SECONDS = 300.0
+shared_forecast_cache: dict[str, Any] = {"ts": 0.0, "payload": None}
+shared_forecast_lock = threading.Lock()
+
 def utcnow():
     return datetime.now(timezone.utc)
 
@@ -330,11 +340,54 @@ def kraken_prices():
         raise HTTPException(503, f"Kraken-prijzen tijdelijk niet beschikbaar: {e}")
 
 
+def load_shared_forecast() -> dict[str, Any] | None:
+    """Use one published forecast source, with a short bounded HTTP timeout."""
+    if not LOCAL_MODE:
+        return None
+    now = time.monotonic()
+    with shared_forecast_lock:
+        cached = shared_forecast_cache["payload"]
+        if cached is not None and now - shared_forecast_cache["ts"] < SHARED_FORECAST_CACHE_SECONDS:
+            return dict(cached)
+    try:
+        response = requests.get(
+            SHARED_FORECAST_URL,
+            headers={"Accept": "application/json", "User-Agent": "CryptoForecaster/4.2-local"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict) or payload.get("source") != "github-pages":
+            return None
+        forecasts = payload.get("forecasts")
+        if not isinstance(forecasts, list) or not forecasts or not payload.get("updatedAt"):
+            return None
+        if any(not isinstance(f, dict) or "probUp" not in f or "coin" not in f for f in forecasts):
+            return None
+    except (requests.RequestException, ValueError, TypeError):
+        return None
+    with shared_forecast_lock:
+        shared_forecast_cache.update(ts=now, payload=payload)
+    return dict(payload)
+
 @app.get("/api/v1/dashboard")
 def dashboard():
+    shared = load_shared_forecast()
+    if shared is not None:
+        shared["forecastOrigin"] = "github-pages"
+        shared["strategyOrigin"] = "local-model"
+        shared["warning"] = (
+            "Voorspellingen komen uit het gedeelde online model. Handelsstrategie, "
+            "strategie-audit en portefeuilleverdeling gebruiken nog lokale modelresultaten "
+            "en kunnen daardoor afwijken."
+        )
+        return shared
     latest_path=OUTPUT_DIR/"latest_forecasts.csv"
     if not latest_path.exists():
-        return demo_payload()
+        result = demo_payload()
+        if LOCAL_MODE:
+            result["warning"] = "Online model niet bereikbaar; er zijn ook geen lokale voorspellingen beschikbaar."
+        return result
 
     latest=pd.read_csv(latest_path)
     latest=latest[latest["model"].astype(str).str.upper()=="META"].copy()
@@ -393,7 +446,12 @@ def dashboard():
     updated=max((f["date"] for f in forecasts),default=utcnow().isoformat())
     return {
         "updatedAt":updated,
-        "source":"live",
+        "source":"local-fallback" if LOCAL_MODE else "live",
+        "forecastOrigin":"local-fallback" if LOCAL_MODE else "local-model",
+        "strategyOrigin":"local-model",
+        "baseCurrency":"USD",
+        "warning":("Online model niet bereikbaar: tijdelijk lokale voorspellingen getoond. "
+                   "Deze cijfers kunnen afwijken van GitHub Pages.") if LOCAL_MODE else None,
         "forecasts":forecasts,
         "metrics":metrics,
         "events":events,
