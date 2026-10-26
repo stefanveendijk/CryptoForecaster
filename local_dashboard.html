@@ -330,7 +330,7 @@ function renderEntryStatus(){
 function renderPriceGuard(){
  const box=document.getElementById('priceGuard'); if(!box)return; box.innerHTML=''; box.className='';
  if(!strategy||!kraken)return; const coin=selectedCoin,q=kraken[coin]||{},ask=Number(q.ask); if(!Number.isFinite(ask))return;
- const signal=String(strategy.signal||''), modelDate=(forecastFor(coin,7)||{}).date||dashboard?.updatedAt||''; let anchor=readSignalAnchor(coin);
+ const signal=String(strategy.signal||''), modelDate=strategy.modelDate||'unknown-local-date'; let anchor=readSignalAnchor(coin);
  if(signal==='KOPEN'&&(!anchor||anchor.modelDate!==modelDate||!Number.isFinite(Number(anchor.price)))){anchor={price:ask,modelDate:modelDate,createdAt:new Date().toISOString()};writeSignalAnchor(coin,anchor);} else if(signal==='VERKOPEN'){clearSignalAnchor(coin);anchor=null;}
  if((signal!=='KOPEN'&&!anchor)||!anchor||!Number.isFinite(Number(anchor.price)))return;
  const anchorPrice=Number(anchor.price),reviewPrice=anchorPrice*1.02,moved=ask/anchorPrice-1,needsReview=ask>reviewPrice;
@@ -437,7 +437,7 @@ function renderStrategy(){
   box.innerHTML=`
     <div class="signal-wrap">
       <div class="signal-main">
-        <div class="signal-label">${selectedCoin} modelsignaal</div>
+        <div class="signal-label">${selectedCoin} lokaal modelsignaal · ${fmtDate(strategy.modelDate)}</div>
         <div class="signal-name ${cls}">${strategy.signal}</div>
         <div class="signal-score">Signaalscore: ${score}/100 · modelconfidence: ${pct(strategy.confidence)}</div>
         <div class="row"><span>Mijn huidige positie</span><span class="value">${pct(strategy.currentAllocation)}</span></div>
