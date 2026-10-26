@@ -147,6 +147,21 @@ class SharedForecastTests(unittest.TestCase):
         self.assertEqual(result["modelDate"], today)
         self.assertNotEqual(result["signal"], "GEEN ACTUEEL SIGNAAL")
 
+    def test_stale_local_portfolio_recommendation_is_blocked(self):
+        import pandas as pd
+        directory = Path(self.tmp.name) / "output"
+        directory.mkdir(parents=True, exist_ok=True)
+        old = (datetime.now(timezone.utc).date() - timedelta(days=15)).isoformat()
+        rows = [
+            {"date": old, "coin": coin, "horizon": horizon,
+             "model": "META", "prob_up": 0.8, "pred_ret": .05}
+            for coin in ("BTC", "ETH") for horizon in (1, 7, 30, 90)
+        ]
+        pd.DataFrame(rows).to_csv(directory / "latest_forecasts.csv", index=False)
+        result = cloud_server.portfolio_strategy_endpoint()
+        self.assertFalse(result["available"])
+        self.assertIn("uitgeschakeld", result["reason"])
+
     def test_local_trade_model_date_is_preserved(self):
         import pandas as pd
         directory = Path(self.tmp.name)
