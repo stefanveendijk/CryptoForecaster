@@ -500,9 +500,36 @@ def strategy(
     if current_position not in {0.0,0.5,1.0}:
         raise HTTPException(400,"current_position moet 0, 0.5 of 1 zijn.")
     prices=load_price_history(allow_download=False)
+    shared = load_shared_forecast()
+    latest_override = None
+    if shared:
+        selected = {}
+        for f in shared.get("forecasts", []):
+            if str(f.get("coin", "")).upper() != coin.upper():
+                continue
+            try:
+                horizon = int(f["horizon"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            if horizon not in trading_strategy.HORIZONS:
+                continue
+            selected[horizon] = {
+                "date": str(f.get("date", "")),
+                "prob_up": clean_number(f.get("probUp")),
+                "pred_ret": clean_number(f.get("predReturn")),
+                "confidence": clean_number(f.get("confidenceScore")),
+                "expected_price": clean_number(f.get("expectedPrice")),
+                "low80_price": clean_number(f.get("low80Price")),
+                "high80_price": clean_number(f.get("high80Price")),
+            }
+        # Even incomplete published data must not silently fall back to an old
+        # local BUY/SELL signal. The signal builder will safely block it.
+        latest_override = selected
     try:
         return trading_strategy.build_strategy(
-            OUTPUT_DIR,prices,coin,current_position=current_position
+            OUTPUT_DIR, prices, coin, current_position=current_position,
+            latest_override=latest_override,
+            signal_source="github-pages" if shared else "local-model",
         )
     except Exception as e:
         raise HTTPException(500,f"Strategieberekening mislukt: {e}")
