@@ -1,5 +1,6 @@
 """Fast checks that laptop forecast cards and GitHub Pages use one source."""
 import os
+from datetime import date, datetime, timedelta, timezone
 import tempfile
 import unittest
 from pathlib import Path
@@ -87,6 +88,65 @@ class SharedForecastTests(unittest.TestCase):
         with self.assertRaises(Exception):
             cloud_server.history("BTC", 7)
 
+    def test_october_11_local_signal_blocked_on_october_26(self):
+        import pandas as pd
+        directory = Path(self.tmp.name)
+        rows = [{
+            "date": "2026-10-11", "coin": "BTC", "horizon": h,
+            "model": "META", "prob_up": .85, "pred_ret": .08,
+            "confidence_score": .99,
+        } for h in (1, 7, 30, 90)]
+        pd.DataFrame(rows).to_csv(directory / "latest_forecasts.csv", index=False)
+        result = trading_strategy.build_strategy(
+            directory, pd.DataFrame(), "BTC", current_position=0.,
+            as_of_utc_date=date(2026, 10, 26),
+        )
+        self.assertEqual(result["modelDate"], "2026-10-11")
+        self.assertEqual(result["signalAgeDays"], 15)
+        self.assertEqual(result["signal"], "GEEN ACTUEEL SIGNAAL")
+        self.assertFalse(result["signalFresh"])
+        self.assertEqual(result["targetAllocation"], 0)
+        self.assertIsNone(result["signalScore"])
+
+    def test_fresh_online_signal_uses_same_forecast_values(self):
+        import pandas as pd
+        directory = Path(self.tmp.name)
+        latest = {
+            h: {
+                "date": "2026-10-26", "prob_up": .85,
+                "pred_ret": .08, "confidence": .80,
+            }
+            for h in (1, 7, 30, 90)
+        }
+        result = trading_strategy.build_strategy(
+            directory, pd.DataFrame(), "BTC", current_position=0.,
+            latest_override=latest, signal_source="github-pages",
+            as_of_utc_date=date(2026, 10, 26),
+        )
+        self.assertTrue(result["signalFresh"])
+        self.assertEqual(result["signalSource"], "github-pages")
+        self.assertEqual(result["modelDate"], "2026-10-26")
+        self.assertIn(result["signal"], ("KOPEN", "WACHTEN"))
+        self.assertFalse(result["signalHistoryComparable"])
+
+    @patch.object(cloud_server, "load_shared_forecast")
+    def test_strategy_endpoint_uses_online_data(self, shared):
+        today = datetime.now(timezone.utc).date().isoformat()
+        shared.return_value = {
+            "source": "github-pages",
+            "updatedAt": today,
+            "forecasts": [
+                {"coin": "BTC", "horizon": h, "date": today,
+                 "probUp": .84, "predReturn": .07, "confidenceScore": .92}
+                for h in (1, 7, 30, 90)
+            ],
+        }
+        result = cloud_server.strategy(coin="BTC", current_position=0.)
+        self.assertTrue(result["signalFresh"])
+        self.assertEqual(result["signalSource"], "github-pages")
+        self.assertEqual(result["modelDate"], today)
+        self.assertNotEqual(result["signal"], "GEEN ACTUEEL SIGNAAL")
+
     def test_local_trade_model_date_is_preserved(self):
         import pandas as pd
         directory = Path(self.tmp.name)
@@ -105,7 +165,8 @@ class SharedForecastTests(unittest.TestCase):
         self.assertIn("Kans op daling", online)
         self.assertIn("forecastOrigin", local)
         self.assertIn("kans op daling", local)
-        self.assertIn("lokaal modelsignaal", local)
+        self.assertIn("actuele gedeelde online voorspellingen", local)
+        self.assertIn("GEEN ACTUEEL SIGNAAL", local)
         self.assertIn("lastHistoryDate", local)
         self.assertIn("historyFreshness", local)
         self.assertIn("const validNumber=", local)
