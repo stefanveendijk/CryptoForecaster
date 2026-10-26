@@ -292,6 +292,11 @@ function renderEntryStatus(){
   if(!strategy)return;
   const signal=String(strategy.signal||'');
   let title=''; let text=''; let cls='warn';
+  if(strategy.signalFresh===false){
+    box.className='entry-status bad';
+    box.innerHTML='<div class="entry-title">Geen actueel handelsadvies</div><div class="sub">De modelgegevens zijn verouderd of onvolledig (modeldatum: '+fmtDate(strategy.modelDate)+'). Koop- en verkoopsignalen zijn tijdelijk geblokkeerd.</div>';
+    return;
+  }
   if(signal==='WACHTEN'){
     title='Wachten op bevestiging';
     text='Het model vindt de voorwaarden voor een nieuwe instap nog niet sterk genoeg.';
@@ -331,7 +336,7 @@ function renderEntryStatus(){
 }
 function renderPriceGuard(){
  const box=document.getElementById('priceGuard'); if(!box)return; box.innerHTML=''; box.className='';
- if(!strategy||!kraken)return; const coin=selectedCoin,q=kraken[coin]||{},ask=Number(q.ask); if(!Number.isFinite(ask))return;
+ if(!strategy||strategy.signalFresh===false||!kraken)return; const coin=selectedCoin,q=kraken[coin]||{},ask=Number(q.ask); if(!Number.isFinite(ask))return;
  const signal=String(strategy.signal||''), modelDate=strategy.modelDate||'unknown-local-date'; let anchor=readSignalAnchor(coin);
  if(signal==='KOPEN'&&(!anchor||anchor.modelDate!==modelDate||!Number.isFinite(Number(anchor.price)))){anchor={price:ask,modelDate:modelDate,createdAt:new Date().toISOString()};writeSignalAnchor(coin,anchor);} else if(signal==='VERKOPEN'){clearSignalAnchor(coin);anchor=null;}
  if((signal!=='KOPEN'&&!anchor)||!anchor||!Number.isFinite(Number(anchor.price)))return;
@@ -431,7 +436,9 @@ function renderStrategy(){
   const box=document.getElementById('strategyBox');
   box.className='';
   const recent=strategy.last12Months||{},full=strategy.backtest||{};
-  const cls=strategyClass(strategy.signal);
+  const cls=strategy.signalFresh===false?'sell':strategyClass(strategy.signal);
+  const sourceLabel=strategy.signalSource==='github-pages'?'actuele gedeelde online voorspellingen':'lokale modelvoorspellingen';
+  const signalNote=strategy.signalFresh===false?'LET OP: het modelsignaal is niet actueel; geen koop-/verkoopadvies beschikbaar.':(strategy.signalSource==='github-pages'?'Actueel signaal uit het online model. De hieronder getoonde historische strategieprestaties komen nog uit de lokale backtest en zijn niet één-op-één een validatie van dit online signaal.':'Signaal en historische strategietest gebaseerd op lokaal opgeslagen modeldata.');
   const gap=strategy.last12MonthsTargetGap;
   const targetText=gap===null||gap===undefined?'—':(gap>=0?'doel gehaald in laatste 12 mnd':'onder doel in laatste 12 mnd');
   const score=strategy.signalScore===null||strategy.signalScore===undefined?'—':Number(strategy.signalScore).toFixed(0);
@@ -439,8 +446,9 @@ function renderStrategy(){
   box.innerHTML=`
     <div class="signal-wrap">
       <div class="signal-main">
-        <div class="signal-label">${selectedCoin} lokaal modelsignaal · ${fmtDate(strategy.modelDate)}</div>
+        <div class="signal-label">${selectedCoin} modelsignaal · ${fmtDate(strategy.modelDate)} · ${sourceLabel}</div>
         <div class="signal-name ${cls}">${strategy.signal}</div>
+        <div class="signal-note">${signalNote}</div>
         <div class="signal-score">Signaalscore: ${score}/100 · modelconfidence: ${pct(strategy.confidence)}</div>
         <div class="row"><span>Mijn huidige positie</span><span class="value">${pct(strategy.currentAllocation)}</span></div>
         <div class="row"><span>Model-doelpositie</span><span class="value">${pct(strategy.targetAllocation)}</span></div>
@@ -456,7 +464,7 @@ function renderStrategy(){
           <div class="stat"><div class="l">Aantal transactiemomenten OOS</div><div class="n">${full.trades??'—'}</div></div>
         </div>
         <div class="signal-note">
-          <b>${targetText}.</b> +100% per jaar is een doelbenchmark, geen rendementsbelofte.
+          <b>${targetText}.</b> Historische resultaten uit de lokale backtest. +100% per jaar is een doelbenchmark, geen rendementsbelofte.
           Het signaal is long-only, gebruikt hysterese om overtrading te beperken en past een
           historische voorspelling pas toe op de daaropvolgende handelsdag. Transactiekosten
           van 0,1% per positiewijziging zijn in de backtest opgenomen.
