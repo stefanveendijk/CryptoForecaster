@@ -324,6 +324,8 @@ def build_strategy(
             "high80Price": z.get("high80_price"),
         }
 
+    if not signal_fresh:
+        confidence = None
     score100 = float(score * 100.0) if score is not None else None
     recent_return = recent.get("totalReturn")
     target_gap = recent_return - ANNUAL_TARGET if recent_return is not None else None
@@ -334,14 +336,15 @@ def build_strategy(
             "Geblokkeerd: modeldata zijn verouderd, onvolledig of hebben verschillende datums. "
             "Niet handelen op basis van dit modelsignaal."
         )
-    for h in [7, 30, 90, 1]:
-        z = latest.get(h)
-        if not z:
-            continue
-        p = z.get("prob_up")
-        r = z.get("pred_ret")
-        if p is not None and r is not None:
-            reasons.append(f"{h}d: P(omhoog) {p*100:.1f}%, verwacht rendement {r*100:+.1f}%")
+    if signal_fresh:
+        for h in [7, 30, 90, 1]:
+            z = latest.get(h)
+            if not z:
+                continue
+            p = z.get("prob_up")
+            r = z.get("pred_ret")
+            if p is not None and r is not None:
+                reasons.append(f"{h}d: P(omhoog) {p*100:.1f}%, verwacht rendement {r*100:+.1f}%")
 
     return {
         "coin": coin,
