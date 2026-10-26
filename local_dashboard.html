@@ -794,7 +794,7 @@ async function loadAll(){
     const age=Date.parse(String(dashboard.updatedAt)+'T00:00:00Z');
     const stale=Number.isFinite(age)&&(Date.now()-age)>=2*86400000;
     notice.className='source-notice '+(fallback||stale?'warn':'good');
-    notice.textContent=(shared?'Voorspellingen: gedeelde GitHub Pages-bron (USD). ':fallback?'Let op: GitHub Pages niet bereikbaar; tijdelijke lokale voorspellingen (USD). ':'')+(dashboard.warning||'')+(stale?' Let op: de modelgegevens zijn meer dan één dag oud.':'');
+    notice.textContent=(shared?'Voorspellingen: gedeelde GitHub Pages-bron (USD). ':fallback?'Let op: GitHub Pages niet bereikbaar; tijdelijke lokale voorspellingen (USD). ':'')+(dashboard.warning||'')+(stale?' Let op: de modelgegevens zijn meer dan één dag oud.':'')+(dashboard.marketStructure?.warning?' '+dashboard.marketStructure.warning:'');
     renderForecasts();renderEvents();loadKraken();await loadStrategy();await loadAudit();await loadProof();await loadPortfolio();await loadHistory();
   }catch(e){
     document.getElementById('statusText').textContent='Fout bij laden';
