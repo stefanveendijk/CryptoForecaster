@@ -4,6 +4,7 @@ import json
 import math
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -117,6 +118,8 @@ def main() -> None:
     updated = max((f["date"] for f in forecasts), default="")
     payload = {
         "updatedAt": updated,
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "baseCurrency": "USD",
         "source": "github-pages",
         "forecasts": forecasts,
         "metrics": metrics,
