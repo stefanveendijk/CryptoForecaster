@@ -171,6 +171,7 @@ canvas{width:100%;height:100%;display:block}
     <div>
       <h2 id="chartTitle">Voorspelling versus werkelijkheid</h2>
       <div class="sub" id="chartSub">Historische out-of-sample voorspellingen</div>
+      <div class="sub" id="historyFreshness">Datums van historische gegevens controleren…</div>
     </div>
     <div class="legend">
       <span><i class="sw" style="background:#64b5ff"></i>Voorspeld</span>
@@ -203,6 +204,7 @@ canvas{width:100%;height:100%;display:block}
 <script>
 let dashboard=null, strategy=null, audit=null, proof=null, portfolio=null, kraken=null, selectedCoin='BTC', selectedHorizon=7, historyPoints=[];
 let actualPositions={BTC:0,ETH:0};
+const validNumber=v=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v));
 
 const usd=v=>{
   if(v===null||v===undefined||!Number.isFinite(Number(v))) return '—';
@@ -699,10 +701,20 @@ async function loadHistory(){
     const r=await fetch(`/api/v1/history?coin=${selectedCoin}&horizon=${selectedHorizon}`,{cache:'no-store'});
     if(!r.ok) throw new Error('Historie nog niet beschikbaar voor deze horizon.');
     const j=await r.json();
-    historyPoints=(j.points||[]).filter(p=>p.actualReturn!==null);
+    historyPoints=(j.points||[]).filter(p=>validNumber(p.actualReturn)&&validNumber(p.predReturn));
+    const last=j.lastHistoryDate||historyPoints.at(-1)?.date||null;
+    const observed=j.lastObservedTargetDate||historyPoints.at(-1)?.targetDate||null;
+    const origin=j.source==='github-pages-oos'?'Dezelfde online gegevensbron als de actuele voorspellingen':j.source==='local-oos-fallback'?'Let op: lokale reservegegevens, online historie niet bereikbaar':'Lokale historische gegevens';
+    const latest=Date.parse(String(dashboard?.updatedAt||'')+'T00:00:00Z');
+    const lastDate=Date.parse(String(last||'')+'T00:00:00Z');
+    const overdue=Number.isFinite(latest)&&Number.isFinite(lastDate)&&(latest-lastDate)>((selectedHorizon+7)*86400000);
+    const info=document.getElementById('historyFreshness');
+    info.textContent=origin+'. Laatste historische voorspelling: '+fmtDate(last)+'; uitkomst gemeten over de periode t/m '+fmtDate(observed)+'. Nieuwe 7-daagse voorspellingen worden pas beoordeeld na zeven dagen.'+(overdue?' Waarschuwing: historische gegevens lopen verder achter dan verwacht.':'');
+    info.style.color=overdue||j.source==='local-oos-fallback'?'#f2c36a':'';
     renderHistory();
   }catch(e){
     historyPoints=[];
+    document.getElementById('historyFreshness').textContent='Historische data niet bereikbaar.';
     clearCanvas();
     renderStats();
     err.textContent=e.message||String(e);
@@ -717,7 +729,7 @@ function clearCanvas(){
 }
 
 function renderHistory(){
-  const usePrice=historyPoints.some(p=>Number.isFinite(Number(p.predictedPrice))&&Number.isFinite(Number(p.actualPrice)));
+  const usePrice=historyPoints.length>0 && historyPoints.every(p=>validNumber(p.predictedPrice)&&validNumber(p.actualPrice));
   document.getElementById('chartSub').textContent=usePrice
     ? 'Historische out-of-sample koersvoorspelling tegenover gerealiseerde koers'
     : 'Historische out-of-sample voorspelde rendementen tegenover gerealiseerde rendementen';
