@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable
 
@@ -19,6 +20,7 @@ RETURN_SCALES = {1: 0.02, 7: 0.06, 30: 0.15, 90: 0.30}
 
 TRANSACTION_COST = 0.001
 ANNUAL_TARGET = 1.00  # +100% per jaar is een doelbenchmark, geen garantie.
+MAX_SIGNAL_AGE_DAYS = 1  # Daily crypto predictions: reject a signal aged 2+ UTC calendar days.
 
 # Hysterese: instappen vereist een sterker signaal dan vasthouden.
 BUY_FULL = 0.22
@@ -255,14 +257,34 @@ def _load_latest(output_dir: Path, coin: str) -> Dict[int, Dict[str, float]]:
     return out
 
 
-def build_strategy(output_dir: Path, prices: pd.DataFrame, coin: str, current_position: float | None = None) -> dict:
+def build_strategy(
+    output_dir: Path, prices: pd.DataFrame, coin: str,
+    current_position: float | None = None,
+    latest_override: Dict[int, Dict[str, float]] | None = None,
+    signal_source: str = "local-model",
+    as_of_utc_date: date | None = None,
+) -> dict:
     coin = coin.upper()
     if coin not in {"BTC", "ETH"}:
         raise ValueError("coin moet BTC of ETH zijn")
 
     frame, full = _backtest(output_dir, prices, coin)
-    latest = _load_latest(output_dir, coin)
-    score = _score_from_values(latest)
+    latest = latest_override if latest_override is not None else _load_latest(output_dir, coin)
+    if latest_override is None:
+        signal_source = "local-model"
+    model_dates = {str(z.get("date") or "")[:10] for z in latest.values() if z}
+    model_date = str(latest.get(7, {}).get("date") or "")[:10]
+    complete = all(h in latest and _clean(latest[h].get("prob_up")) is not None
+                   and _clean(latest[h].get("pred_ret")) is not None
+                   for h in HORIZONS)
+    today = as_of_utc_date or datetime.now(timezone.utc).date()
+    try:
+        age_days = (today - date.fromisoformat(model_date)).days
+    except (ValueError, TypeError):
+        age_days = None
+    date_consistent = len(model_dates) == 1 and model_date in model_dates
+    signal_fresh = complete and date_consistent and age_days is not None and 0 <= age_days <= MAX_SIGNAL_AGE_DAYS
+    score = _score_from_values(latest) if signal_fresh else None
 
     model_previous = float(frame["position"].iloc[-1]) if not frame.empty else 0.0
     if current_position is None:
@@ -274,7 +296,7 @@ def build_strategy(output_dir: Path, prices: pd.DataFrame, coin: str, current_po
 
     if score is None:
         target = current
-        signal = "GEEN SIGNAAL"
+        signal = "GEEN ACTUEEL SIGNAAL"
     else:
         target = _target_position(score, current)
         signal = _signal_name(current, target)
@@ -307,6 +329,11 @@ def build_strategy(output_dir: Path, prices: pd.DataFrame, coin: str, current_po
     target_gap = recent_return - ANNUAL_TARGET if recent_return is not None else None
 
     reasons = []
+    if not signal_fresh:
+        reasons.append(
+            "Geblokkeerd: modeldata zijn verouderd, onvolledig of hebben verschillende datums. "
+            "Niet handelen op basis van dit modelsignaal."
+        )
     for h in [7, 30, 90, 1]:
         z = latest.get(h)
         if not z:
@@ -319,7 +346,14 @@ def build_strategy(output_dir: Path, prices: pd.DataFrame, coin: str, current_po
     return {
         "coin": coin,
         "signal": signal,
-        "modelDate": str(latest.get(7, {}).get("date") or ""),
+        "signalFresh": bool(signal_fresh),
+        "signalSource": signal_source,
+        "signalAgeDays": age_days,
+        "signalMaxAgeDays": MAX_SIGNAL_AGE_DAYS,
+        "signalDataComplete": bool(complete and date_consistent),
+        "signalHistoryComparable": latest_override is None,
+        "modelDate": model_date,
+        "backtestSource": "local-model-history",
         "targetAllocation": target,
         "currentAllocation": current,
         "modelPreviousAllocation": model_previous,
