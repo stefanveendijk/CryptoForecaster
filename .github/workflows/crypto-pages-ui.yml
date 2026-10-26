@@ -1,0 +1,67 @@
+name: Crypto Forecaster Pages quick UI
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'pages_site/**'
+      - '.github/workflows/crypto-pages-ui.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: crypto-pages
+  cancel-in-progress: false
+
+jobs:
+  publish-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout current dashboard interface
+        uses: actions/checkout@v4
+
+      # A presentation-only change should not retrain all models (which takes hours).
+      # Preserve the currently published forecasts and available historical charts.
+      - name: Reuse existing published model data
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="https://stefanveendijk.github.io/CryptoForecaster/data"
+          mkdir -p pages_site/data/history
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 \
+            "$ROOT/dashboard.json" -o pages_site/data/dashboard.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path("pages_site/data/dashboard.json").read_text(encoding="utf-8"))
+          assert d.get("source") == "github-pages"
+          assert isinstance(d.get("forecasts"), list) and d["forecasts"]
+          print("Preserved", len(d["forecasts"]), "previously published predictions")
+          PY
+          for coin in BTC ETH; do
+            for horizon in 1 7 30 90; do
+              curl --fail --location --silent --show-error --retry 2 --max-time 20 \
+                "$ROOT/history/${coin}_${horizon}.json" \
+                -o "pages_site/data/history/${coin}_${horizon}.json" || true
+            done
+          done
+          touch pages_site/.nojekyll
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages_site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
