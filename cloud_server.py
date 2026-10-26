@@ -58,6 +58,9 @@ SHARED_FORECAST_URL = os.getenv(
 SHARED_FORECAST_CACHE_SECONDS = 300.0
 shared_forecast_cache: dict[str, Any] = {"ts": 0.0, "payload": None}
 shared_forecast_lock = threading.Lock()
+SHARED_HISTORY_BASE = "https://stefanveendijk.github.io/CryptoForecaster/data/history"
+shared_history_cache: dict[str, dict[str, Any]] = {}
+shared_history_lock = threading.Lock()
 
 def utcnow():
     return datetime.now(timezone.utc)
@@ -530,11 +533,79 @@ def proof():
         raise HTTPException(500,f"Live bewijslaag mislukt: {e}")
 
 
+def load_shared_history(coin: str, horizon: int) -> dict[str, Any] | None:
+    """Retrieve OOS model history from the same publication as shared forecasts."""
+    if not LOCAL_MODE or coin not in {"BTC", "ETH"} or horizon not in {1, 7, 30, 90}:
+        return None
+    key = f"{coin}_{horizon}"
+    now = time.monotonic()
+    with shared_history_lock:
+        cached = shared_history_cache.get(key)
+        if cached and now - cached["ts"] < SHARED_FORECAST_CACHE_SECONDS:
+            return dict(cached["data"])
+    try:
+        response = requests.get(
+            f"{SHARED_HISTORY_BASE}/{key}.json",
+            headers={"Accept": "application/json", "User-Agent": "CryptoForecaster/4.2-local"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        raw = response.json()
+        if not isinstance(raw, dict) or raw.get("coin") != coin or raw.get("horizon") != horizon:
+            return None
+        rows = raw.get("points")
+        if not isinstance(rows, list) or not rows:
+            return None
+        points = []
+        for row in rows:
+            if not isinstance(row, dict) or not row.get("date"):
+                continue
+            try:
+                dt = pd.Timestamp(row["date"]).tz_localize(None).normalize()
+            except (ValueError, TypeError):
+                continue
+            prediction = clean_number(row.get("predReturn"))
+            outcome = clean_number(row.get("actualReturn"))
+            if prediction is None or outcome is None:
+                continue
+            points.append({
+                "date": str(dt.date()),
+                "targetDate": str((dt + pd.Timedelta(days=horizon)).date()),
+                "probUp": clean_number(row.get("probUp")),
+                "predReturn": prediction,
+                "actualReturn": outcome,
+                "startPrice": None,
+                "predictedPrice": None,
+                "actualPrice": None,
+                "low80Price": None,
+                "high80Price": None,
+            })
+        if not points:
+            return None
+        points.sort(key=lambda row: row["date"])
+        result = {
+            "coin": coin, "horizon": horizon,
+            "source": "github-pages-oos",
+            "points": points[-500:],
+            "lastHistoryDate": points[-1]["date"],
+            "lastObservedTargetDate": points[-1]["targetDate"],
+            "note": "Afgeronde historische out-of-sample toetsresultaten; geen toekomstige voorspellingen.",
+        }
+    except (requests.RequestException, ValueError, TypeError):
+        return None
+    with shared_history_lock:
+        shared_history_cache[key] = {"ts": now, "data": result}
+    return dict(result)
+
+
 @app.get("/api/v1/history")
 def history(
     coin:str=Query(pattern="^(BTC|ETH)$"),
     horizon:int=Query(ge=1,le=365),
 ):
+    shared = load_shared_history(coin, horizon)
+    if shared is not None:
+        return shared
     p=OUTPUT_DIR/f"{coin}_{horizon}d_META_oos.csv"
     if not p.exists():
         raise HTTPException(404,"Nog geen history-bestand voor deze combinatie.")
@@ -578,4 +649,13 @@ def history(
             "low80Price":low_price,
             "high80Price":high_price,
         })
-    return {"coin":coin,"horizon":horizon,"points":points}
+    last_date = points[-1]["date"] if points else None
+    last_target = points[-1]["targetDate"] if points else None
+    return {
+        "coin": coin, "horizon": horizon, "points": points,
+        "source": "local-oos-fallback" if LOCAL_MODE else "local-oos",
+        "lastHistoryDate": last_date,
+        "lastObservedTargetDate": last_target,
+        "note": ("Online geschiedenis niet beschikbaar; lokale historische toetsresultaten getoond."
+                 if LOCAL_MODE else "Lokale historische toetsresultaten."),
+    }
