@@ -115,11 +115,25 @@ def main() -> None:
             prices = pd.DataFrame()
     proof = forecast_proof.build_summary(output, prices)
 
+    market_path = output / "market_structure_status.json"
+    market = {"available": None, "warning": None}
+    if market_path.exists():
+        try:
+            market_info = json.loads(market_path.read_text(encoding="utf-8"))
+            available = int(market_info.get("rows", 0)) > 0
+            market = {
+                "available": available,
+                "warning": None if available else "Aanvullende marktstructuurdata ontbreken in deze modelrun.",
+            }
+        except (ValueError, TypeError, OSError, AttributeError):
+            market["warning"] = "Status van aanvullende marktstructuurdata is onbekend."
+
     updated = max((f["date"] for f in forecasts), default="")
     payload = {
         "updatedAt": updated,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "baseCurrency": "USD",
+        "marketStructure": market,
         "source": "github-pages",
         "forecasts": forecasts,
         "metrics": metrics,
