@@ -244,6 +244,7 @@ def _load_latest(output_dir: Path, coin: str) -> Dict[int, Dict[str, float]]:
         if h not in HORIZONS:
             continue
         out[h] = {
+            "date": str(r.get("date") or ""),
             "prob_up": _clean(r.get("prob_up")),
             "pred_ret": _clean(r.get("pred_ret")),
             "confidence": _clean(r.get("confidence_score")),
@@ -318,6 +319,7 @@ def build_strategy(output_dir: Path, prices: pd.DataFrame, coin: str, current_po
     return {
         "coin": coin,
         "signal": signal,
+        "modelDate": str(latest.get(7, {}).get("date") or ""),
         "targetAllocation": target,
         "currentAllocation": current,
         "modelPreviousAllocation": model_previous,
