@@ -536,6 +536,32 @@ def strategy(
 
 @app.get("/api/v1/portfolio-strategy")
 def portfolio_strategy_endpoint():
+    # The experimental BTC/ETH/cash allocation still uses local model data.
+    # Do not display stale allocations as actionable when scheduled local runs stop.
+    today = utcnow().date()
+    local_dates = {}
+    try:
+        for coin in ("BTC", "ETH"):
+            latest = trading_strategy._load_latest(OUTPUT_DIR, coin)
+            date_text = str(latest.get(7, {}).get("date") or "")[:10]
+            local_dates[coin] = date_text
+            if not date_text:
+                return {
+                    "available": False,
+                    "reason": "Experimentele verdeling tijdelijk uitgeschakeld: recente lokale modelgegevens ontbreken.",
+                }
+            last = datetime.strptime(date_text, "%Y-%m-%d").date()
+            age = (today - last).days
+            if age < 0 or age > trading_strategy.MAX_SIGNAL_AGE_DAYS:
+                return {
+                    "available": False, "localModelDates": local_dates,
+                    "reason": (
+                        f"Experimentele verdeling tijdelijk uitgeschakeld: lokale modeldata voor "
+                        f"{coin} stammen van {date_text}. Wacht op een succesvolle lokale modelrun."
+                    ),
+                }
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        return {"available": False, "reason": "Lokale modeldatum kon niet worden gecontroleerd."}
     try:
         return portfolio_strategy.build_portfolio_strategy(OUTPUT_DIR)
     except Exception as e:
