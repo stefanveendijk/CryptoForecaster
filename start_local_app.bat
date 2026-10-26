@@ -79,13 +79,10 @@ for /f %%i in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$now=Get
 
 if "%NEED_CATCHUP%"=="1" (
   echo.
-  echo Dagelijkse modelrun van vandaag ontbreekt. Automatische inhaalrun wordt uitgevoerd...
-  call run_daily_local.bat
-  if errorlevel 1 (
-    echo WAARSCHUWING: automatische inhaalrun is mislukt. Zie local_data\daily_model.log.
-  ) else (
-    echo Inhaalrun gereed en bewijslaag gecontroleerd.
-  )
+  echo Dagelijkse modelrun van vandaag ontbreekt. Inhaalrun wordt in een apart venster gestart...
+  echo De online voorspellingen kunnen intussen direct worden bekeken.
+  rem De dagelijkse runner heeft een lock, zodat Taakplanner en inhaalrun niet overlappen.
+  start "CryptoForecaster Inhaalrun" /min cmd.exe /c ""%CD%\run_daily_local.bat""
 )
 
 echo.
