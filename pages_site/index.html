@@ -28,6 +28,7 @@
 <main>
   <h2>Actuele signalen</h2><p class="intro">BTC en ETH · verwachte koersen in Amerikaanse dollars (USD), niet in euro. Geen koop- of verkoopgarantie.</p>
   <div class="freshness" id="freshness">Modeldatum controleren…</div>
+  <div class="freshness" id="marketStatus"></div>
   <div id="forecasts" class="grid"></div>
   <section class="section"><h2>Modelkwaliteit</h2><div id="metrics"></div></section>
   <section class="section"><h2>Live bewijslaag</h2><p class="intro">Alleen voorspellingen die vooraf zijn vastgelegd tellen mee.</p><div id="proof"></div></section>
@@ -47,6 +48,9 @@ async function load(){
     const freshness=document.getElementById('freshness');
     freshness.className='freshness'+(daysOld!==null&&daysOld>=2?' warn':'');
     freshness.textContent=`Voorspelling op basis van slotkoers ${dateOnly(d.updatedAt)}${published}.${daysOld!==null&&daysOld>=2?' Let op: deze modeldata is meer dan één dag oud.':''}`;
+    const market=document.getElementById('marketStatus');
+    market.textContent=d.marketStructure?.warning||'';
+    market.className='freshness'+(d.marketStructure?.available===false?' warn':'');
     document.getElementById('status').textContent='Automatisch bijgewerkt via GitHub';
     const fs=[...d.forecasts].filter(f=>[1,7,30,90].includes(Number(f.horizon))).sort((a,b)=>a.coin.localeCompare(b.coin)||a.horizon-b.horizon);
     document.getElementById('forecasts').innerHTML=fs.map(f=>{
