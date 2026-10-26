@@ -99,6 +99,10 @@ def run(cfg:Config, workdir:Path, force=False):
     # the long-history core experts.
     df,adv_info=advanced_features.enrich_market_structure(df,cache,force=force)
     print("  [ADV] market structure:",adv_info)
+    # Record missing public derivatives data instead of silently implying it was used.
+    (outdir/"market_structure_status.json").write_text(
+        json.dumps(adv_info, ensure_ascii=False, default=str), encoding="utf-8"
+    )
 
     # Bewaar de dagelijkse BTC/ETH slotkoersen voor het lokale dashboard.
     # Daarmee kan historische voorspelde koers direct naast de gerealiseerde koers worden getoond.
