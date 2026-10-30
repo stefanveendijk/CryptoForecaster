@@ -191,6 +191,47 @@ class SharedForecastTests(unittest.TestCase):
         source = (Path(__file__).resolve().parents[1] / "modeling.py").read_text(encoding="utf-8")
         self.assertEqual(source.count("matured_history(bt, dt, horizon, cfg.recent_weight_window_days)"), 2)
 
+    def test_meta_predictions_ignore_unmatured_outcomes(self):
+        """Changing outcomes that are still in the future must not change today's weights."""
+        import pandas as pd
+        import modeling
+        from config import Config
+
+        dates = pd.date_range("2026-06-01", periods=125, freq="D")
+        cfg = Config()
+        def expert(prob, predicted_return):
+            return pd.DataFrame({
+                "prob_up": [prob] * len(dates),
+                "pred_ret": [predicted_return] * len(dates),
+                "actual_up": [1] * len(dates),
+                "actual_ret": [0.03] * len(dates),
+                "low80": [-0.1] * len(dates),
+                "high80": [0.1] * len(dates),
+            }, index=dates)
+
+        a = expert(0.8, 0.04)
+        b = expert(0.2, -0.04)
+        baseline = modeling.meta_ensemble({"A": a, "B": b}, cfg, horizon=7)
+        a_changed, b_changed = a.copy(), b.copy()
+        a_changed.loc[dates[-6:], "actual_up"] = 0
+        b_changed.loc[dates[-6:], "actual_up"] = 0
+        a_changed.loc[dates[-6:], "actual_ret"] = -0.50
+        b_changed.loc[dates[-6:], "actual_ret"] = -0.50
+        modified = modeling.meta_ensemble({"A": a_changed, "B": b_changed}, cfg, horizon=7)
+        self.assertEqual(baseline.iloc[-1].prob_up, modified.iloc[-1].prob_up)
+        self.assertEqual(baseline.iloc[-1].pred_ret, modified.iloc[-1].pred_ret)
+
+        lp = [
+            {"date": dates[-1], "expert": "A", "prob_up": 0.8,
+             "pred_ret": 0.04, "low80": -0.1, "high80": 0.1},
+            {"date": dates[-1], "expert": "B", "prob_up": 0.2,
+             "pred_ret": -0.04, "low80": -0.1, "high80": 0.1},
+        ]
+        current = modeling.latest_meta(lp, {"A": a, "B": b}, cfg, horizon=7)
+        changed = modeling.latest_meta(lp, {"A": a_changed, "B": b_changed}, cfg, horizon=7)
+        self.assertEqual(current["prob_up"], changed["prob_up"])
+        self.assertEqual(current["pred_ret"], changed["pred_ret"])
+
     def test_ui_clearly_discloses_sources_and_currencies(self):
         root = Path(__file__).resolve().parents[1]
         online = (root / "pages_site/index.html").read_text(encoding="utf-8")
