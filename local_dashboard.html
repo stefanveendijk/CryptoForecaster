@@ -170,12 +170,14 @@ canvas{width:100%;height:100%;display:block}
   <div class="section-head">
     <div>
       <h2 id="chartTitle">Voorspelling versus werkelijkheid</h2>
-      <div class="sub" id="chartSub">Historische out-of-sample voorspellingen</div>
+      <div class="sub" id="chartSub">Afgeronde historische 7-daagse uitkomsten (geen live koersgrafiek)</div>
+      <div class="sub">Blauw = vanaf die dag voorspeld rendement over de gekozen periode. Groen = daadwerkelijk rendement aan het einde van diezelfde periode. Een vlakke blauwe lijn betekent dat uitschieters niet goed worden voorspeld.</div>
       <div class="sub" id="historyFreshness">Datums van historische gegevens controleren…</div>
     </div>
     <div class="legend">
       <span><i class="sw" style="background:#64b5ff"></i>Voorspeld</span>
       <span><i class="sw" style="background:#4ed1a1"></i>Werkelijk</span>
+      <span><i class="sw" style="background:#8990a0"></i>Geen koersverandering</span>
     </div>
   </div>
   <div class="chart-wrap"><canvas id="historyChart"></canvas></div>
@@ -194,7 +196,7 @@ canvas{width:100%;height:100%;display:block}
     <div class="stat"><div class="l">Gemiddeld rendement per jaar</div><div class="n" style="font-size:15px">Hoeveel je vermogen gemiddeld per jaar groeide, inclusief herinvesteren van winst.</div></div>
     <div class="stat"><div class="l">Grootste tussentijdse daling</div><div class="n" style="font-size:15px">Hoe ver je vermogen op het slechtste moment onder een eerdere top kwam.</div></div>
     <div class="stat"><div class="l">Rendement t.o.v. risico</div><div class="n" style="font-size:15px">Hoger betekent doorgaans meer rendement voor de hoeveelheid schommelingen.</div></div>
-    <div class="stat"><div class="l">Eerlijke historische test</div><div class="n" style="font-size:15px">De app doet alsof hij telkens in het verleden staat en gebruikt alleen informatie die toen bekend was.</div></div>
+    <div class="stat"><div class="l">Historische test</div><div class="n" style="font-size:15px">De app simuleert eerdere beslismomenten en telt voor het wegen van modellen alleen voorspellingen mee waarvan de uitkomst toen al bekend was. Dit is geen bewezen live rendement.</div></div>
   </div>
 </div>
 
@@ -218,6 +220,12 @@ const eur=v=>{
 };
 const pct=v=>v===null||v===undefined||!Number.isFinite(Number(v))?'—':(Number(v)*100).toFixed(1)+'%';
 const num=(v,d=3)=>v===null||v===undefined||!Number.isFinite(Number(v))?'—':Number(v).toFixed(d);
+const qualityMessage=m=>{
+  if(!m||!validNumber(m.maeReturn)||!validNumber(m.maeBaselineZero)||!validNumber(m.brier))return 'Nog geen gecontroleerde referentiemeting beschikbaar.';
+  return Number(m.brier)<0.25&&Number(m.maeReturn)<Number(m.maeBaselineZero)
+    ? 'Beter dan eenvoudige referenties in deze historische test; live succes niet bewezen.'
+    : 'Geen overtuigend voordeel boven eenvoudige referenties; wees voorzichtig met signalen.';
+};
 const fmtDate=s=>{if(!s)return '—';if(/^\d{4}-\d{2}-\d{2}$/.test(String(s)))return String(s).split('-').reverse().join('-');const d=new Date(s);return isNaN(d)?String(s):d.toLocaleDateString('nl-NL');};
 
 function loadSavedPositions(){
@@ -391,8 +399,9 @@ function renderForecasts(){
         <div class="row"><span>kans op daling</span><span class="value">${pct(down)}</span></div>
         <div class="row"><span>verwachte koers (USD)</span><span class="value">${usd(f.expectedPrice)}</span></div>
         <div class="row"><span>80%-band</span><span class="value">${usd(f.low80Price)} – ${usd(f.high80Price)}</span></div>
-        <div class="row"><span>modelvertrouwen</span><span class="value">${pct(f.confidenceScore)}</span></div>
-        <div class="row"><span>voorspelkwaliteit (AUC)</span><span class="value">${num(m.auc)}</span></div>
+        <div class="row"><span>modelovereenstemming (geen slagingskans)</span><span class="value">${pct(f.confidenceScore)}</span></div>
+        <div class="row"><span>voorspelkwaliteit (AUC)</span><span class="value">${num(m?.auc)}</span></div>
+        <div class="muted">${qualityMessage(m)}</div>
         <div class="row"><span>modeldatum</span><span class="value">${fmtDate(f.date)}</span></div>`;
     }
     grid.appendChild(el);
@@ -740,8 +749,8 @@ function clearCanvas(){
 function renderHistory(){
   const usePrice=historyPoints.length>0 && historyPoints.every(p=>validNumber(p.predictedPrice)&&validNumber(p.actualPrice));
   document.getElementById('chartSub').textContent=usePrice
-    ? 'Historische out-of-sample koersvoorspelling tegenover gerealiseerde koers'
-    : 'Historische out-of-sample voorspelde rendementen tegenover gerealiseerde rendementen';
+    ? 'Historische voorspelde eindkoers tegenover gerealiseerde eindkoers (geen dagelijkse koers)'
+    : 'Historische voorspelde periodereturn tegenover gerealiseerde periodereturn (geen dagelijkse koersgrafiek)';
 
   const pts=historyPoints.slice(-180);
   const c=document.getElementById('historyChart'),ctx=c.getContext('2d');
@@ -768,6 +777,11 @@ function renderHistory(){
     const label=usePrice?'$'+Math.round(v).toLocaleString('nl-NL'):v.toFixed(1)+'%';
     ctx.fillText(label,5,yy+4);
   }
+  // A zero-return reference exposes whether forecasts beat 'nothing changes'.
+  if(!usePrice && ymin<=0 && ymax>=0){
+    const yy=y(0);ctx.strokeStyle='#8990a0';ctx.lineWidth=1.5;ctx.setLineDash([6,5]);
+    ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(W-pad.r,yy);ctx.stroke();ctx.setLineDash([]);
+  }
   const dates=[0,Math.floor((pts.length-1)/2),pts.length-1];
   for(const i of dates){ctx.fillText(fmtDate(pts[i].targetDate||pts[i].date),Math.max(pad.l-5,Math.min(W-85,x(i)-28)),H-12)}
 
@@ -792,7 +806,9 @@ function renderStats(){
     <div class="stat"><div class="l">Historische OOS-punten</div><div class="n">${pts.length}</div></div>
     <div class="stat"><div class="l">Richting correct</div><div class="n">${pct(hit)}</div></div>
     <div class="stat"><div class="l">Gem. absolute rendementsfout</div><div class="n">${pct(mae)}</div></div>
-    <div class="stat"><div class="l">Brier-score</div><div class="n">${num(m.brier,4)}</div></div>`;
+    <div class="stat"><div class="l">Referentie: altijd 0% voorspellen</div><div class="n">${pct(m?.maeBaselineZero)}</div></div>
+    <div class="stat"><div class="l">Brier-score (referentie 0,250)</div><div class="n">${num(m?.brier,4)}</div></div>
+    <div class="stat"><div class="l">Beoordeling</div><div class="n" style="font-size:14px">${qualityMessage(m)}</div></div>`;
 }
 
 function renderEvents(){

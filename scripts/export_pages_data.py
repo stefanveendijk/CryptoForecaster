@@ -89,6 +89,9 @@ def main() -> None:
                 "accuracy": clean(r.get("accuracy")),
                 "balancedAccuracy": clean(r.get("balanced_accuracy")),
                 "maeReturn": clean(r.get("mae_return")),
+                "maeBaselineZero": clean(r.get("mae_baseline_zero")),
+                "maeSkillZero": clean(r.get("mae_skill_zero")),
+                "brierSkillHalf": clean(r.get("brier_skill_half")),
             })
 
     events = []

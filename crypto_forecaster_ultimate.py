@@ -170,7 +170,7 @@ def run(cfg:Config, workdir:Path, force=False):
             if not bts:
                 continue
 
-            meta=modeling.meta_ensemble(bts,cfg)
+            meta=modeling.meta_ensemble(bts,cfg,horizon=h)
             if not meta.empty:
                 mm=modeling.metrics(meta)
                 sm=modeling.strategy_metrics(meta,df[f"{coin}_close"],cfg)
@@ -193,7 +193,7 @@ def run(cfg:Config, workdir:Path, force=False):
                         current.append(lp)
                 except Exception:
                     pass
-            lm=modeling.latest_meta(current,bts,cfg)
+            lm=modeling.latest_meta(current,bts,cfg,horizon=h)
             if lm:
                 current_price=float(df[f"{coin}_close"].loc[lm["date"]])
                 lm["current_price"]=current_price

@@ -22,6 +22,7 @@ from sklearn.preprocessing import RobustScaler
 from sklearn.inspection import permutation_importance
 
 from config import Config
+from forecast_quality import matured_history
 
 warnings.filterwarnings("ignore")
 
@@ -285,9 +286,15 @@ def metrics(bt:pd.DataFrame):
         "rmse_return":mean_squared_error(bt.actual_ret,bt.pred_ret)**0.5,
         "coverage80":((bt.actual_ret>=bt.low80)&(bt.actual_ret<=bt.high80)).mean(),
     }
+    # A no-change prediction (0% return) and a 50/50 direction prediction
+    # provide honest simple references on the identical OOS evaluation dates.
+    baseline_mae=float(np.mean(np.abs(bt.actual_ret)))
+    out["mae_baseline_zero"]=baseline_mae
+    out["mae_skill_zero"]=(1.0-out["mae_return"]/baseline_mae) if baseline_mae>0 else np.nan
+    out["brier_skill_half"]=1.0-out["brier"]/0.25
     return out
 
-def meta_ensemble(expert_bts:Dict[str,pd.DataFrame], cfg:Config):
+def meta_ensemble(expert_bts:Dict[str,pd.DataFrame], cfg:Config, horizon:int):
     all_dates=sorted(set().union(*[set(bt.index) for bt in expert_bts.values() if not bt.empty]))
     rows=[]
     for dt in all_dates:
@@ -296,7 +303,7 @@ def meta_ensemble(expert_bts:Dict[str,pd.DataFrame], cfg:Config):
             if bt.empty or dt not in bt.index: continue
             row=bt.loc[dt]
             if isinstance(row,pd.DataFrame): row=row.iloc[-1]
-            hist=bt.loc[(bt.index<dt)&(bt.index>=dt-pd.Timedelta(days=cfg.recent_weight_window_days))]
+            hist=matured_history(bt, dt, horizon, cfg.recent_weight_window_days)
             if len(hist)>=90:
                 loss=np.mean((hist.prob_up-hist.actual_up)**2)
                 mae=np.mean(np.abs(hist.pred_ret-hist.actual_ret))
@@ -396,14 +403,14 @@ def latest_expert_prediction(df,coin,horizon,features,cfg,expert_name):
             "low80":r+q10,"high80":r+q90,"n_features":len(features),
             "ood_fraction":ood_fraction}
 
-def latest_meta(latest_preds:List[dict], oos_bts:Dict[str,pd.DataFrame], cfg:Config):
+def latest_meta(latest_preds:List[dict], oos_bts:Dict[str,pd.DataFrame], cfg:Config, horizon:int):
     if not latest_preds:return None
     dt=max(p["date"] for p in latest_preds)
     usable=[p for p in latest_preds if p["date"]>=dt-pd.Timedelta(days=3)]
     losses=[]
     for p in usable:
         bt=oos_bts.get(p["expert"],pd.DataFrame())
-        hist=bt.tail(cfg.recent_weight_window_days) if not bt.empty else bt
+        hist=matured_history(bt, dt, horizon, cfg.recent_weight_window_days)
         loss=np.mean((hist.prob_up-hist.actual_up)**2) if len(hist)>=90 else np.nan
         losses.append(loss)
     arr=np.array(losses,dtype=float)

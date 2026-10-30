@@ -30,7 +30,7 @@
   <div class="freshness" id="freshness">Modeldatum controleren…</div>
   <div class="freshness" id="marketStatus"></div>
   <div id="forecasts" class="grid"></div>
-  <section class="section"><h2>Modelkwaliteit</h2><div id="metrics"></div></section>
+  <section class="section"><h2>Modelkwaliteit</h2><p class="intro">Historische tests vergelijken voorspellingen met de uitkomst na 1, 7, 30 of 90 dagen, niet met koersschommelingen onderweg. Sterke pieken en dalen kunnen door het model worden gemist. De 50/50- en nulrendement-referenties tonen of extra complexiteit iets oplevert.</p><div id="metrics"></div></section>
   <section class="section"><h2>Live bewijslaag</h2><p class="intro">Alleen voorspellingen die vooraf zijn vastgelegd tellen mee.</p><div id="proof"></div></section>
   <section class="section"><h2>Recente nieuwsevents</h2><div id="events"><div class="muted">Geen events beschikbaar.</div></div></section>
 </main>
@@ -56,10 +56,17 @@ async function load(){
     document.getElementById('forecasts').innerHTML=fs.map(f=>{
       const up=Number(f.probUp);
       const down=Number.isFinite(up)?1-up:null;
-      return `<div class="card"><div class="row"><div><div class="coin">${f.coin} · ${f.horizon}d</div><div class="h">kans op stijging</div></div><div class="prob">${pct(f.probUp,0)}</div></div><div class="row" style="margin-top:8px"><span class="muted">Kans op daling</span><span class="metric">${pct(down,0)}</span></div><div class="row" style="margin-top:12px"><span class="muted">Verwacht rendement</span><span class="ret ${f.predReturn>=0?'pos':'neg'}">${pct(f.predReturn)}</span></div><div class="row" style="margin-top:8px"><span class="muted">Verwachte koers (USD)</span><span class="metric">${usd(f.expectedPrice)}</span></div><div class="pill">Modeldatum ${dateOnly(f.date)} · vertrouwen ${pct(f.confidenceScore,0)}</div></div>`;
+      return `<div class="card"><div class="row"><div><div class="coin">${f.coin} · ${f.horizon}d</div><div class="h">kans op stijging</div></div><div class="prob">${pct(f.probUp,0)}</div></div><div class="row" style="margin-top:8px"><span class="muted">Kans op daling</span><span class="metric">${pct(down,0)}</span></div><div class="row" style="margin-top:12px"><span class="muted">Verwacht rendement</span><span class="ret ${f.predReturn>=0?'pos':'neg'}">${pct(f.predReturn)}</span></div><div class="row" style="margin-top:8px"><span class="muted">Verwachte koers (USD)</span><span class="metric">${usd(f.expectedPrice)}</span></div><div class="pill">Modeldatum ${dateOnly(f.date)} · modelovereenstemming ${pct(f.confidenceScore,0)} (geen slagingskans)</div></div>`;
     }).join('');
     const ms=(d.metrics||[]).filter(m=>String(m.expert).toUpperCase()==='META').sort((a,b)=>a.coin.localeCompare(b.coin)||a.horizon-b.horizon);
-    document.getElementById('metrics').innerHTML=ms.map(m=>`<div class="card small"><div class="row"><span class="coin" style="font-size:15px">${m.coin} · ${m.horizon}d</span><span class="metric">AUC ${m.auc==null?'—':Number(m.auc).toFixed(3)}</span></div><div class="muted" style="margin-top:6px">Brier ${m.brier==null?'—':Number(m.brier).toFixed(3)} · accuracy ${pct(m.accuracy,0)}</div></div>`).join('');
+    document.getElementById('metrics').innerHTML=ms.map(m=>{
+      const assessed=m.maeReturn!=null && m.maeBaselineZero!=null && m.brier!=null;
+      const good=assessed&&Number(m.brier)<0.25&&Number(m.maeReturn)<Number(m.maeBaselineZero);
+      const verdict=!assessed?'Nieuwe referentiemeting nog niet beschikbaar.'
+        :good?'Historisch beter dan de eenvoudige referenties (geen bewijs voor live winst).'
+        :'Geen overtuigend voordeel boven eenvoudige referenties.';
+      return `<div class="card small"><div class="row"><span class="coin" style="font-size:15px">${m.coin} · ${m.horizon}d</span><span class="metric">AUC ${m.auc==null?'—':Number(m.auc).toFixed(3)}</span></div><div class="muted" style="margin-top:6px">Brier ${m.brier==null?'—':Number(m.brier).toFixed(3)} (50/50 referentie 0,250) · rendementsfout ${pct(m.maeReturn)} vs altijd 0%: ${pct(m.maeBaselineZero)}</div><div class="muted" style="margin-top:6px">${verdict}</div></div>`;
+    }).join('');
     const proof=d.proof||{};
     const ps=(proof.summaries||[]).sort((a,b)=>a.coin.localeCompare(b.coin)||a.horizon-b.horizon);
     document.getElementById('proof').innerHTML=!proof.started

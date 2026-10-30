@@ -11,6 +11,7 @@ os.environ["AUTO_RUN_MODEL"] = "false"
 
 import cloud_server
 import trading_strategy
+from forecast_quality import matured_history
 
 
 class SharedForecastTests(unittest.TestCase):
@@ -171,6 +172,24 @@ class SharedForecastTests(unittest.TestCase):
         }]).to_csv(directory / "latest_forecasts.csv", index=False)
         d = trading_strategy._load_latest(directory, "BTC")
         self.assertEqual(d[7]["date"], "2026-10-25")
+
+    def test_7_day_weighting_never_sees_unmatured_outcomes(self):
+        import pandas as pd
+        dates = pd.date_range("2026-10-01", periods=15, freq="D")
+        bt = pd.DataFrame({
+            "pred_ret": [0.01]*15,
+            "actual_ret": [0.10]*15,
+            "prob_up": [0.6]*15,
+            "actual_up": [1]*15,
+        }, index=dates)
+        hist = matured_history(bt, pd.Timestamp("2026-10-15"), 7, 730)
+        self.assertEqual(hist.index.max(), pd.Timestamp("2026-10-08"))
+        self.assertNotIn(pd.Timestamp("2026-10-09"), hist.index)
+        hist_tomorrow = matured_history(bt, pd.Timestamp("2026-10-16"), 7, 730)
+        self.assertEqual(hist_tomorrow.index.max(), pd.Timestamp("2026-10-09"))
+        # The same maturity check is used for historical and latest expert weighting.
+        source = (Path(__file__).resolve().parents[1] / "modeling.py").read_text(encoding="utf-8")
+        self.assertEqual(source.count("matured_history(bt, dt, horizon, cfg.recent_weight_window_days)"), 2)
 
     def test_ui_clearly_discloses_sources_and_currencies(self):
         root = Path(__file__).resolve().parents[1]

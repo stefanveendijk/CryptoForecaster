@@ -429,6 +429,9 @@ def dashboard():
                 "accuracy":clean_number(r.get("accuracy")),
                 "balancedAccuracy":clean_number(r.get("balanced_accuracy")),
                 "maeReturn":clean_number(r.get("mae_return")),
+                "maeBaselineZero":clean_number(r.get("mae_baseline_zero")),
+                "maeSkillZero":clean_number(r.get("mae_skill_zero")),
+                "brierSkillHalf":clean_number(r.get("brier_skill_half")),
             })
 
     events=[]
