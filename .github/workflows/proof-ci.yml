@@ -18,9 +18,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install proof-layer dependencies
-        run: python -m pip install numpy pandas requests fastapi
+        run: python -m pip install numpy pandas requests fastapi scikit-learn
       - name: Syntax check
-        run: python -m py_compile forecast_proof.py repair_proof_local.py crypto_forecaster_ultimate.py cloud_server.py scripts/export_pages_data.py
+        run: python -m py_compile forecast_proof.py repair_proof_local.py crypto_forecaster_ultimate.py modeling.py forecast_quality.py cloud_server.py scripts/export_pages_data.py
       - name: Static exporter import check
         run: python -c "import runpy; runpy.run_path('scripts/export_pages_data.py', run_name='proof_import_check')"
       - name: Shared source and currency regression tests
